@@ -2,37 +2,42 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
-#include "common/logging/log.h"
-#include "core/hle/ipc_helpers.h"
-#include "core/hle/kernel/hle_ipc.h"
 #include "core/hle/service/audio/audrec_u.h"
 
-namespace Service {
-namespace Audio {
+namespace Service::Audio {
 
 class IFinalOutputRecorder final : public ServiceFramework<IFinalOutputRecorder> {
 public:
-    IFinalOutputRecorder() : ServiceFramework("IFinalOutputRecorder") {
+    explicit IFinalOutputRecorder(Core::System& system_)
+        : ServiceFramework{system_, "IFinalOutputRecorder"} {
+        // clang-format off
         static const FunctionInfo functions[] = {
-            {0x0, nullptr, "GetFinalOutputRecorderState"},
-            {0x1, nullptr, "StartFinalOutputRecorder"},
-            {0x2, nullptr, "StopFinalOutputRecorder"},
-            {0x3, nullptr, "AppendFinalOutputRecorderBuffer"},
-            {0x4, nullptr, "RegisterBufferEvent"},
-            {0x5, nullptr, "GetReleasedFinalOutputRecorderBuffer"},
-            {0x6, nullptr, "ContainsFinalOutputRecorderBuffer"},
+            {0, nullptr, "GetFinalOutputRecorderState"},
+            {1, nullptr, "Start"},
+            {2, nullptr, "Stop"},
+            {3, nullptr, "AppendFinalOutputRecorderBuffer"},
+            {4, nullptr, "RegisterBufferEvent"},
+            {5, nullptr, "GetReleasedFinalOutputRecorderBuffers"},
+            {6, nullptr, "ContainsFinalOutputRecorderBuffer"},
+            {7, nullptr, "GetFinalOutputRecorderBufferEndTime"},
+            {8, nullptr, "AppendFinalOutputRecorderBufferAuto"},
+            {9, nullptr, "GetReleasedFinalOutputRecorderBufferAuto"},
+            {10, nullptr, "FlushFinalOutputRecorderBuffers"},
+            {11, nullptr, "AttachWorkBuffer"},
         };
+        // clang-format on
+
         RegisterHandlers(functions);
     }
-    ~IFinalOutputRecorder() = default;
 };
 
-AudRecU::AudRecU() : ServiceFramework("audrec:u") {
+AudRecU::AudRecU(Core::System& system_) : ServiceFramework{system_, "audrec:u"} {
     static const FunctionInfo functions[] = {
-        {0x00000000, nullptr, "OpenFinalOutputRecorder"},
+        {0, nullptr, "OpenFinalOutputRecorder"},
     };
     RegisterHandlers(functions);
 }
 
-} // namespace Audio
-} // namespace Service
+AudRecU::~AudRecU() = default;
+
+} // namespace Service::Audio

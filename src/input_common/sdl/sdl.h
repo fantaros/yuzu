@@ -1,4 +1,4 @@
-// Copyright 2017 Citra Emulator Project
+// Copyright 2018 Citra Emulator Project
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
@@ -6,37 +6,46 @@
 
 #include <memory>
 #include <vector>
-#include "core/frontend/input.h"
+#include "common/param_package.h"
+#include "input_common/main.h"
 
-union SDL_Event;
-namespace Common {
-class ParamPackage;
-}
-namespace InputCommon {
-namespace Polling {
+namespace InputCommon::Polling {
 class DevicePoller;
 enum class DeviceType;
-} // namespace Polling
-} // namespace InputCommon
+} // namespace InputCommon::Polling
 
-namespace InputCommon {
-namespace SDL {
+namespace InputCommon::SDL {
 
-/// Initializes and registers SDL device factories
-void Init();
+class State {
+public:
+    using Pollers = std::vector<std::unique_ptr<Polling::DevicePoller>>;
 
-/// Unresisters SDL device factories and shut them down.
-void Shutdown();
+    /// Unregisters SDL device factories and shut them down.
+    virtual ~State() = default;
 
-/// Creates a ParamPackage from an SDL_Event that can directly be used to create a ButtonDevice
-Common::ParamPackage SDLEventToButtonParamPackage(const SDL_Event& event);
+    virtual Pollers GetPollers(Polling::DeviceType) {
+        return {};
+    }
 
-namespace Polling {
+    virtual std::vector<Common::ParamPackage> GetInputDevices() {
+        return {};
+    }
 
-/// Get all DevicePoller that use the SDL backend for a specific device type
-std::vector<std::unique_ptr<InputCommon::Polling::DevicePoller>> GetPollers(
-    InputCommon::Polling::DeviceType type);
+    virtual ButtonMapping GetButtonMappingForDevice(const Common::ParamPackage&) {
+        return {};
+    }
+    virtual AnalogMapping GetAnalogMappingForDevice(const Common::ParamPackage&) {
+        return {};
+    }
+    virtual MotionMapping GetMotionMappingForDevice(const Common::ParamPackage&) {
+        return {};
+    }
+};
 
-} // namespace Polling
-} // namespace SDL
-} // namespace InputCommon
+class NullState : public State {
+public:
+};
+
+std::unique_ptr<State> Init();
+
+} // namespace InputCommon::SDL

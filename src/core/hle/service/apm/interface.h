@@ -6,22 +6,38 @@
 
 #include "core/hle/service/service.h"
 
-namespace Service {
-namespace APM {
+namespace Service::APM {
+
+class Controller;
+class Module;
 
 class APM final : public ServiceFramework<APM> {
 public:
-    APM(std::shared_ptr<Module> apm, const char* name);
-    ~APM() = default;
+    explicit APM(Core::System& system_, std::shared_ptr<Module> apm_, Controller& controller_,
+                 const char* name);
+    ~APM() override;
 
 private:
     void OpenSession(Kernel::HLERequestContext& ctx);
+    void GetPerformanceMode(Kernel::HLERequestContext& ctx);
+    void IsCpuOverclockEnabled(Kernel::HLERequestContext& ctx);
 
     std::shared_ptr<Module> apm;
+    Controller& controller;
 };
 
-/// Registers all AM services with the specified service manager.
-void InstallInterfaces(SM::ServiceManager& service_manager);
+class APM_Sys final : public ServiceFramework<APM_Sys> {
+public:
+    explicit APM_Sys(Core::System& system_, Controller& controller);
+    ~APM_Sys() override;
 
-} // namespace APM
-} // namespace Service
+    void SetCpuBoostMode(Kernel::HLERequestContext& ctx);
+
+private:
+    void GetPerformanceEvent(Kernel::HLERequestContext& ctx);
+    void GetCurrentPerformanceConfiguration(Kernel::HLERequestContext& ctx);
+
+    Controller& controller;
+};
+
+} // namespace Service::APM

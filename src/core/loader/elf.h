@@ -8,32 +8,31 @@
 #include "common/common_types.h"
 #include "core/loader/loader.h"
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Loader namespace
+namespace Core {
+class System;
+}
 
 namespace Loader {
 
 /// Loads an ELF/AXF file
 class AppLoader_ELF final : public AppLoader {
 public:
-    AppLoader_ELF(FileUtil::IOFile&& file, std::string filename);
+    explicit AppLoader_ELF(FileSys::VirtualFile file);
 
     /**
-     * Returns the type of the file
-     * @param file FileUtil::IOFile open file
-     * @param filepath Path of the file that we are opening.
-     * @return FileType found, or FileType::Error if this loader doesn't know it
+     * Identifies whether or not the given file is an ELF file.
+     *
+     * @param elf_file The file to identify.
+     *
+     * @return FileType::ELF, or FileType::Error if the file is not an ELF file.
      */
-    static FileType IdentifyType(FileUtil::IOFile& file, const std::string& filepath);
+    static FileType IdentifyType(const FileSys::VirtualFile& elf_file);
 
-    FileType GetFileType() override {
-        return IdentifyType(file, filename);
+    FileType GetFileType() const override {
+        return IdentifyType(file);
     }
 
-    ResultStatus Load(Kernel::SharedPtr<Kernel::Process>& process) override;
-
-private:
-    std::string filename;
+    LoadResult Load(Kernel::KProcess& process, Core::System& system) override;
 };
 
 } // namespace Loader

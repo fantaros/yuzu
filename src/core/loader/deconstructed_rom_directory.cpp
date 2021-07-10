@@ -3,181 +3,243 @@
 // Refer to the license.txt file included.
 
 #include <cinttypes>
+#include <cstring>
 #include "common/common_funcs.h"
-#include "common/common_paths.h"
-#include "common/file_util.h"
 #include "common/logging/log.h"
-#include "common/string_util.h"
+#include "core/core.h"
+#include "core/file_sys/content_archive.h"
+#include "core/file_sys/control_metadata.h"
+#include "core/file_sys/patch_manager.h"
 #include "core/file_sys/romfs_factory.h"
-#include "core/hle/kernel/process.h"
-#include "core/hle/kernel/resource_limit.h"
+#include "core/hle/kernel/k_page_table.h"
+#include "core/hle/kernel/k_process.h"
+#include "core/hle/kernel/kernel.h"
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/loader/deconstructed_rom_directory.h"
 #include "core/loader/nso.h"
-#include "core/memory.h"
 
 namespace Loader {
 
-static std::string FindRomFS(const std::string& directory) {
-    std::string filepath_romfs;
-    const auto callback = [&filepath_romfs](unsigned*, const std::string& directory,
-                                            const std::string& virtual_name) -> bool {
-        const std::string physical_name = directory + virtual_name;
-        if (FileUtil::IsDirectory(physical_name)) {
-            // Skip directories
-            return true;
+AppLoader_DeconstructedRomDirectory::AppLoader_DeconstructedRomDirectory(FileSys::VirtualFile file_,
+                                                                         bool override_update_)
+    : AppLoader(std::move(file_)), override_update(override_update_) {
+    const auto file_dir = file->GetContainingDirectory();
+
+    // Title ID
+    const auto npdm = file_dir->GetFile("main.npdm");
+    if (npdm != nullptr) {
+        const auto res = metadata.Load(npdm);
+        if (res == ResultStatus::Success)
+            title_id = metadata.GetTitleID();
+    }
+
+    // Icon
+    FileSys::VirtualFile icon_file = nullptr;
+    for (const auto& language : FileSys::LANGUAGE_NAMES) {
+        icon_file = file_dir->GetFile("icon_" + std::string(language) + ".dat");
+        if (icon_file != nullptr) {
+            icon_data = icon_file->ReadAllBytes();
+            break;
         }
+    }
 
-        // Verify extension
-        const std::string extension = physical_name.substr(physical_name.find_last_of(".") + 1);
-        if (Common::ToLower(extension) != "romfs") {
-            return true;
-        }
+    if (icon_data.empty()) {
+        // Any png, jpeg, or bmp file
+        const auto& files = file_dir->GetFiles();
+        const auto icon_iter =
+            std::find_if(files.begin(), files.end(), [](const FileSys::VirtualFile& f) {
+                return f->GetExtension() == "png" || f->GetExtension() == "jpg" ||
+                       f->GetExtension() == "bmp" || f->GetExtension() == "jpeg";
+            });
+        if (icon_iter != files.end())
+            icon_data = (*icon_iter)->ReadAllBytes();
+    }
 
-        // Found it - we are done
-        filepath_romfs = std::move(physical_name);
-        return false;
-    };
+    // Metadata
+    FileSys::VirtualFile nacp_file = file_dir->GetFile("control.nacp");
+    if (nacp_file == nullptr) {
+        const auto& files = file_dir->GetFiles();
+        const auto nacp_iter =
+            std::find_if(files.begin(), files.end(),
+                         [](const FileSys::VirtualFile& f) { return f->GetExtension() == "nacp"; });
+        if (nacp_iter != files.end())
+            nacp_file = *nacp_iter;
+    }
 
-    // Search the specified directory recursively, looking for the first .romfs file, which will
-    // be used for the RomFS
-    FileUtil::ForeachDirectoryEntry(nullptr, directory, callback);
-
-    return filepath_romfs;
+    if (nacp_file != nullptr) {
+        FileSys::NACP nacp(nacp_file);
+        name = nacp.GetApplicationName();
+    }
 }
 
-AppLoader_DeconstructedRomDirectory::AppLoader_DeconstructedRomDirectory(FileUtil::IOFile&& file,
-                                                                         std::string filepath)
-    : AppLoader(std::move(file)), filepath(std::move(filepath)) {}
+AppLoader_DeconstructedRomDirectory::AppLoader_DeconstructedRomDirectory(
+    FileSys::VirtualDir directory, bool override_update_)
+    : AppLoader(directory->GetFile("main")), dir(std::move(directory)),
+      override_update(override_update_) {}
 
-FileType AppLoader_DeconstructedRomDirectory::IdentifyType(FileUtil::IOFile& file,
-                                                           const std::string& filepath) {
-    bool is_main_found{};
-    bool is_npdm_found{};
-    bool is_rtld_found{};
-    bool is_sdk_found{};
-
-    const auto callback = [&](unsigned* num_entries_out, const std::string& directory,
-                              const std::string& virtual_name) -> bool {
-        // Skip directories
-        std::string physical_name = directory + virtual_name;
-        if (FileUtil::IsDirectory(physical_name)) {
-            return true;
-        }
-
-        // Verify filename
-        if (Common::ToLower(virtual_name) == "main") {
-            is_main_found = true;
-        } else if (Common::ToLower(virtual_name) == "main.npdm") {
-            is_npdm_found = true;
-            return true;
-        } else if (Common::ToLower(virtual_name) == "rtld") {
-            is_rtld_found = true;
-        } else if (Common::ToLower(virtual_name) == "sdk") {
-            is_sdk_found = true;
-        } else {
-            // Contrinue searching
-            return true;
-        }
-
-        // Verify file is an NSO
-        FileUtil::IOFile file(physical_name, "rb");
-        if (AppLoader_NSO::IdentifyType(file, physical_name) != FileType::NSO) {
-            return false;
-        }
-
-        // We are done if we've found and verified all required NSOs
-        return !(is_main_found && is_npdm_found && is_rtld_found && is_sdk_found);
-    };
-
-    // Search the directory recursively, looking for the required modules
-    const std::string directory = filepath.substr(0, filepath.find_last_of("/\\")) + DIR_SEP;
-    FileUtil::ForeachDirectoryEntry(nullptr, directory, callback);
-
-    if (is_main_found && is_npdm_found && is_rtld_found && is_sdk_found) {
+FileType AppLoader_DeconstructedRomDirectory::IdentifyType(const FileSys::VirtualFile& dir_file) {
+    if (FileSys::IsDirectoryExeFS(dir_file->GetContainingDirectory())) {
         return FileType::DeconstructedRomDirectory;
     }
 
     return FileType::Error;
 }
 
-ResultStatus AppLoader_DeconstructedRomDirectory::Load(
-    Kernel::SharedPtr<Kernel::Process>& process) {
+AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirectory::Load(
+    Kernel::KProcess& process, Core::System& system) {
     if (is_loaded) {
-        return ResultStatus::ErrorAlreadyLoaded;
-    }
-    if (!file.IsOpen()) {
-        return ResultStatus::Error;
+        return {ResultStatus::ErrorAlreadyLoaded, {}};
     }
 
-    const std::string directory = filepath.substr(0, filepath.find_last_of("/\\")) + DIR_SEP;
-    const std::string npdm_path = directory + DIR_SEP + "main.npdm";
+    if (dir == nullptr) {
+        if (file == nullptr) {
+            return {ResultStatus::ErrorNullFile, {}};
+        }
 
-    ResultStatus result = metadata.Load(npdm_path);
+        dir = file->GetContainingDirectory();
+    }
+
+    // Read meta to determine title ID
+    FileSys::VirtualFile npdm = dir->GetFile("main.npdm");
+    if (npdm == nullptr) {
+        return {ResultStatus::ErrorMissingNPDM, {}};
+    }
+
+    const ResultStatus result = metadata.Load(npdm);
     if (result != ResultStatus::Success) {
-        return result;
+        return {result, {}};
+    }
+
+    if (override_update) {
+        const FileSys::PatchManager patch_manager(
+            metadata.GetTitleID(), system.GetFileSystemController(), system.GetContentProvider());
+        dir = patch_manager.PatchExeFS(dir);
+    }
+
+    // Reread in case PatchExeFS affected the main.npdm
+    npdm = dir->GetFile("main.npdm");
+    if (npdm == nullptr) {
+        return {ResultStatus::ErrorMissingNPDM, {}};
+    }
+
+    const ResultStatus result2 = metadata.Load(npdm);
+    if (result2 != ResultStatus::Success) {
+        return {result2, {}};
     }
     metadata.Print();
 
-    process = Kernel::Process::Create("main", metadata.GetTitleID());
+    const auto static_modules = {"rtld",    "main",    "subsdk0", "subsdk1", "subsdk2", "subsdk3",
+                                 "subsdk4", "subsdk5", "subsdk6", "subsdk7", "sdk"};
 
-    // Load NSO modules
-    VAddr next_load_addr{Memory::PROCESS_IMAGE_VADDR};
-    for (const auto& module : {"rtld", "main", "subsdk0", "subsdk1", "subsdk2", "subsdk3",
-                               "subsdk4", "subsdk5", "subsdk6", "subsdk7", "sdk"}) {
-        const std::string path = directory + DIR_SEP + module;
-        const VAddr load_addr = next_load_addr;
-        next_load_addr = AppLoader_NSO::LoadModule(path, load_addr);
-        if (next_load_addr) {
-            LOG_DEBUG(Loader, "loaded module %s @ 0x%" PRIx64, module, load_addr);
-        } else {
-            next_load_addr = load_addr;
+    // Use the NSO module loader to figure out the code layout
+    std::size_t code_size{};
+    for (const auto& module : static_modules) {
+        const FileSys::VirtualFile module_file{dir->GetFile(module)};
+        if (!module_file) {
+            continue;
         }
+
+        const bool should_pass_arguments = std::strcmp(module, "rtld") == 0;
+        const auto tentative_next_load_addr = AppLoader_NSO::LoadModule(
+            process, system, *module_file, code_size, should_pass_arguments, false);
+        if (!tentative_next_load_addr) {
+            return {ResultStatus::ErrorLoadingNSO, {}};
+        }
+
+        code_size = *tentative_next_load_addr;
     }
 
-    process->svc_access_mask.set();
-    process->address_mappings = default_address_mappings;
-    process->resource_limit =
-        Kernel::ResourceLimit::GetForCategory(Kernel::ResourceLimitCategory::APPLICATION);
-    process->Run(Memory::PROCESS_IMAGE_VADDR, metadata.GetMainThreadPriority(),
-                 metadata.GetMainThreadStackSize());
+    // Setup the process code layout
+    if (process.LoadFromMetadata(metadata, code_size).IsError()) {
+        return {ResultStatus::ErrorUnableToParseKernelMetadata, {}};
+    }
+
+    // Load NSO modules
+    modules.clear();
+    const VAddr base_address{process.PageTable().GetCodeRegionStart()};
+    VAddr next_load_addr{base_address};
+    const FileSys::PatchManager pm{metadata.GetTitleID(), system.GetFileSystemController(),
+                                   system.GetContentProvider()};
+    for (const auto& module : static_modules) {
+        const FileSys::VirtualFile module_file{dir->GetFile(module)};
+        if (!module_file) {
+            continue;
+        }
+
+        const VAddr load_addr{next_load_addr};
+        const bool should_pass_arguments = std::strcmp(module, "rtld") == 0;
+        const auto tentative_next_load_addr = AppLoader_NSO::LoadModule(
+            process, system, *module_file, load_addr, should_pass_arguments, true, pm);
+        if (!tentative_next_load_addr) {
+            return {ResultStatus::ErrorLoadingNSO, {}};
+        }
+
+        next_load_addr = *tentative_next_load_addr;
+        modules.insert_or_assign(load_addr, module);
+        LOG_DEBUG(Loader, "loaded module {} @ 0x{:X}", module, load_addr);
+    }
 
     // Find the RomFS by searching for a ".romfs" file in this directory
-    filepath_romfs = FindRomFS(directory);
+    const auto& files = dir->GetFiles();
+    const auto romfs_iter =
+        std::find_if(files.begin(), files.end(), [](const FileSys::VirtualFile& f) {
+            return f->GetName().find(".romfs") != std::string::npos;
+        });
 
     // Register the RomFS if a ".romfs" file was found
-    if (!filepath_romfs.empty()) {
-        Service::FileSystem::RegisterFileSystem(std::make_unique<FileSys::RomFS_Factory>(*this),
-                                                Service::FileSystem::Type::RomFS);
+    if (romfs_iter != files.end() && *romfs_iter != nullptr) {
+        romfs = *romfs_iter;
+        system.GetFileSystemController().RegisterRomFS(std::make_unique<FileSys::RomFSFactory>(
+            *this, system.GetContentProvider(), system.GetFileSystemController()));
     }
 
     is_loaded = true;
+    return {ResultStatus::Success,
+            LoadParameters{metadata.GetMainThreadPriority(), metadata.GetMainThreadStackSize()}};
+}
+
+ResultStatus AppLoader_DeconstructedRomDirectory::ReadRomFS(FileSys::VirtualFile& out_dir) {
+    if (romfs == nullptr) {
+        return ResultStatus::ErrorNoRomFS;
+    }
+
+    out_dir = romfs;
     return ResultStatus::Success;
 }
 
-ResultStatus AppLoader_DeconstructedRomDirectory::ReadRomFS(
-    std::shared_ptr<FileUtil::IOFile>& romfs_file, u64& offset, u64& size) {
-
-    if (filepath_romfs.empty()) {
-        LOG_DEBUG(Loader, "No RomFS available");
-        return ResultStatus::ErrorNotUsed;
+ResultStatus AppLoader_DeconstructedRomDirectory::ReadIcon(std::vector<u8>& out_buffer) {
+    if (icon_data.empty()) {
+        return ResultStatus::ErrorNoIcon;
     }
 
-    // We reopen the file, to allow its position to be independent
-    romfs_file = std::make_shared<FileUtil::IOFile>(filepath_romfs, "rb");
-    if (!romfs_file->IsOpen()) {
-        return ResultStatus::Error;
+    out_buffer = icon_data;
+    return ResultStatus::Success;
+}
+
+ResultStatus AppLoader_DeconstructedRomDirectory::ReadProgramId(u64& out_program_id) {
+    out_program_id = title_id;
+    return ResultStatus::Success;
+}
+
+ResultStatus AppLoader_DeconstructedRomDirectory::ReadTitle(std::string& out_title) {
+    if (name.empty()) {
+        return ResultStatus::ErrorNoControl;
     }
 
-    offset = 0;
-    size = romfs_file->GetSize();
+    out_title = name;
+    return ResultStatus::Success;
+}
 
-    LOG_DEBUG(Loader, "RomFS offset:           0x%016" PRIX64, offset);
-    LOG_DEBUG(Loader, "RomFS size:             0x%016" PRIX64, size);
+bool AppLoader_DeconstructedRomDirectory::IsRomFSUpdatable() const {
+    return false;
+}
 
-    // Reset read pointer
-    file.Seek(0, SEEK_SET);
+ResultStatus AppLoader_DeconstructedRomDirectory::ReadNSOModules(Modules& out_modules) {
+    if (!is_loaded) {
+        return ResultStatus::ErrorNotInitialized;
+    }
 
+    out_modules = this->modules;
     return ResultStatus::Success;
 }
 

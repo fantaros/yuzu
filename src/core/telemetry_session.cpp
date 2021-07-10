@@ -2,58 +2,113 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
-#include <cstring>
+#include <array>
+
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
 
 #include "common/assert.h"
-#include "common/file_util.h"
-#include "common/scm_rev.h"
-#ifdef ARCHITECTURE_x86_64
-#include "common/x64/cpu_detect.h"
-#endif
-#include "core/core.h"
-#include "core/settings.h"
+#include "common/common_types.h"
+#include "common/fs/file.h"
+#include "common/fs/fs.h"
+#include "common/fs/path_util.h"
+#include "common/logging/log.h"
+
+#include "common/settings.h"
+#include "core/file_sys/control_metadata.h"
+#include "core/file_sys/patch_manager.h"
+#include "core/loader/loader.h"
 #include "core/telemetry_session.h"
+
+#ifdef ENABLE_WEB_SERVICE
+#include "web_service/telemetry_json.h"
+#include "web_service/verify_login.h"
+#endif
 
 namespace Core {
 
-#ifdef ARCHITECTURE_x86_64
-static const char* CpuVendorToStr(Common::CPUVendor vendor) {
-    switch (vendor) {
-    case Common::CPUVendor::INTEL:
-        return "Intel";
-    case Common::CPUVendor::AMD:
-        return "Amd";
-    case Common::CPUVendor::OTHER:
-        return "Other";
-    }
-    UNREACHABLE();
-}
-#endif
+namespace Telemetry = Common::Telemetry;
 
 static u64 GenerateTelemetryId() {
     u64 telemetry_id{};
+
+    mbedtls_entropy_context entropy;
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_context ctr_drbg;
+    constexpr std::array<char, 18> personalization{{"yuzu Telemetry ID"}};
+
+    mbedtls_ctr_drbg_init(&ctr_drbg);
+    ASSERT(mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
+                                 reinterpret_cast<const unsigned char*>(personalization.data()),
+                                 personalization.size()) == 0);
+    ASSERT(mbedtls_ctr_drbg_random(&ctr_drbg, reinterpret_cast<unsigned char*>(&telemetry_id),
+                                   sizeof(u64)) == 0);
+
+    mbedtls_ctr_drbg_free(&ctr_drbg);
+    mbedtls_entropy_free(&entropy);
+
     return telemetry_id;
+}
+
+static const char* TranslateRenderer(Settings::RendererBackend backend) {
+    switch (backend) {
+    case Settings::RendererBackend::OpenGL:
+        return "OpenGL";
+    case Settings::RendererBackend::Vulkan:
+        return "Vulkan";
+    }
+    return "Unknown";
+}
+
+static const char* TranslateGPUAccuracyLevel(Settings::GPUAccuracy backend) {
+    switch (backend) {
+    case Settings::GPUAccuracy::Normal:
+        return "Normal";
+    case Settings::GPUAccuracy::High:
+        return "High";
+    case Settings::GPUAccuracy::Extreme:
+        return "Extreme";
+    }
+    return "Unknown";
 }
 
 u64 GetTelemetryId() {
     u64 telemetry_id{};
-    static const std::string& filename{FileUtil::GetUserPath(D_CONFIG_IDX) + "telemetry_id"};
+    const auto filename = Common::FS::GetYuzuPath(Common::FS::YuzuPath::ConfigDir) / "telemetry_id";
 
-    if (FileUtil::Exists(filename)) {
-        FileUtil::IOFile file(filename, "rb");
+    bool generate_new_id = !Common::FS::Exists(filename);
+
+    if (!generate_new_id) {
+        Common::FS::IOFile file{filename, Common::FS::FileAccessMode::Read,
+                                Common::FS::FileType::BinaryFile};
+
         if (!file.IsOpen()) {
-            LOG_ERROR(Core, "failed to open telemetry_id: %s", filename.c_str());
+            LOG_ERROR(Core, "failed to open telemetry_id: {}",
+                      Common::FS::PathToUTF8String(filename));
             return {};
         }
-        file.ReadBytes(&telemetry_id, sizeof(u64));
-    } else {
-        FileUtil::IOFile file(filename, "wb");
+
+        if (!file.ReadObject(telemetry_id) || telemetry_id == 0) {
+            LOG_ERROR(Frontend, "telemetry_id is 0. Generating a new one.", telemetry_id);
+            generate_new_id = true;
+        }
+    }
+
+    if (generate_new_id) {
+        Common::FS::IOFile file{filename, Common::FS::FileAccessMode::Write,
+                                Common::FS::FileType::BinaryFile};
+
         if (!file.IsOpen()) {
-            LOG_ERROR(Core, "failed to open telemetry_id: %s", filename.c_str());
+            LOG_ERROR(Core, "failed to open telemetry_id: {}",
+                      Common::FS::PathToUTF8String(filename));
             return {};
         }
+
         telemetry_id = GenerateTelemetryId();
-        file.WriteBytes(&telemetry_id, sizeof(u64));
+
+        if (!file.WriteObject(telemetry_id)) {
+            LOG_ERROR(Core, "Failed to write telemetry_id to file.");
+        }
     }
 
     return telemetry_id;
@@ -61,106 +116,32 @@ u64 GetTelemetryId() {
 
 u64 RegenerateTelemetryId() {
     const u64 new_telemetry_id{GenerateTelemetryId()};
-    static const std::string& filename{FileUtil::GetUserPath(D_CONFIG_IDX) + "telemetry_id"};
+    const auto filename = Common::FS::GetYuzuPath(Common::FS::YuzuPath::ConfigDir) / "telemetry_id";
 
-    FileUtil::IOFile file(filename, "wb");
+    Common::FS::IOFile file{filename, Common::FS::FileAccessMode::Write,
+                            Common::FS::FileType::BinaryFile};
+
     if (!file.IsOpen()) {
-        LOG_ERROR(Core, "failed to open telemetry_id: %s", filename.c_str());
+        LOG_ERROR(Core, "failed to open telemetry_id: {}", Common::FS::PathToUTF8String(filename));
         return {};
     }
-    file.WriteBytes(&new_telemetry_id, sizeof(u64));
+
+    if (!file.WriteObject(new_telemetry_id)) {
+        LOG_ERROR(Core, "Failed to write telemetry_id to file.");
+    }
+
     return new_telemetry_id;
 }
 
-std::future<bool> VerifyLogin(std::string username, std::string token, std::function<void()> func) {
+bool VerifyLogin(const std::string& username, const std::string& token) {
 #ifdef ENABLE_WEB_SERVICE
-    return WebService::VerifyLogin(username, token, Settings::values.verify_endpoint_url, func);
+    return WebService::VerifyLogin(Settings::values.web_api_url.GetValue(), username, token);
 #else
-    return std::async(std::launch::async, [func{std::move(func)}]() {
-        func();
-        return false;
-    });
+    return false;
 #endif
 }
 
-TelemetrySession::TelemetrySession() {
-#ifdef ENABLE_WEB_SERVICE
-    if (Settings::values.enable_telemetry) {
-        backend = std::make_unique<WebService::TelemetryJson>(
-            Settings::values.telemetry_endpoint_url, Settings::values.citra_username,
-            Settings::values.citra_token);
-    } else {
-        backend = std::make_unique<Telemetry::NullVisitor>();
-    }
-#else
-    backend = std::make_unique<Telemetry::NullVisitor>();
-#endif
-    // Log one-time top-level information
-    AddField(Telemetry::FieldType::None, "TelemetryId", GetTelemetryId());
-
-    // Log one-time session start information
-    const s64 init_time{std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::system_clock::now().time_since_epoch())
-                            .count()};
-    AddField(Telemetry::FieldType::Session, "Init_Time", init_time);
-    std::string program_name;
-    const Loader::ResultStatus res{System::GetInstance().GetAppLoader().ReadTitle(program_name)};
-    if (res == Loader::ResultStatus::Success) {
-        AddField(Telemetry::FieldType::Session, "ProgramName", program_name);
-    }
-
-    // Log application information
-    const bool is_git_dirty{std::strstr(Common::g_scm_desc, "dirty") != nullptr};
-    AddField(Telemetry::FieldType::App, "Git_IsDirty", is_git_dirty);
-    AddField(Telemetry::FieldType::App, "Git_Branch", Common::g_scm_branch);
-    AddField(Telemetry::FieldType::App, "Git_Revision", Common::g_scm_rev);
-    AddField(Telemetry::FieldType::App, "BuildDate", Common::g_build_date);
-    AddField(Telemetry::FieldType::App, "BuildName", Common::g_build_name);
-
-// Log user system information
-#ifdef ARCHITECTURE_x86_64
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Model", Common::GetCPUCaps().cpu_string);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_BrandString",
-             Common::GetCPUCaps().brand_string);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Vendor",
-             CpuVendorToStr(Common::GetCPUCaps().vendor));
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_AES", Common::GetCPUCaps().aes);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_AVX", Common::GetCPUCaps().avx);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_AVX2", Common::GetCPUCaps().avx2);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_BMI1", Common::GetCPUCaps().bmi1);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_BMI2", Common::GetCPUCaps().bmi2);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_FMA", Common::GetCPUCaps().fma);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_FMA4", Common::GetCPUCaps().fma4);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_SSE", Common::GetCPUCaps().sse);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_SSE2", Common::GetCPUCaps().sse2);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_SSE3", Common::GetCPUCaps().sse3);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_SSSE3",
-             Common::GetCPUCaps().ssse3);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_SSE41",
-             Common::GetCPUCaps().sse4_1);
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Extension_x64_SSE42",
-             Common::GetCPUCaps().sse4_2);
-#else
-    AddField(Telemetry::FieldType::UserSystem, "CPU_Model", "Other");
-#endif
-#ifdef __APPLE__
-    AddField(Telemetry::FieldType::UserSystem, "OsPlatform", "Apple");
-#elif defined(_WIN32)
-    AddField(Telemetry::FieldType::UserSystem, "OsPlatform", "Windows");
-#elif defined(__linux__) || defined(linux) || defined(__linux)
-    AddField(Telemetry::FieldType::UserSystem, "OsPlatform", "Linux");
-#else
-    AddField(Telemetry::FieldType::UserSystem, "OsPlatform", "Unknown");
-#endif
-
-    // Log user configuration information
-    AddField(Telemetry::FieldType::UserConfig, "Core_CpuCore",
-             static_cast<int>(Settings::values.cpu_core));
-    AddField(Telemetry::FieldType::UserConfig, "Renderer_ResolutionFactor",
-             Settings::values.resolution_factor);
-    AddField(Telemetry::FieldType::UserConfig, "Renderer_ToggleFramelimit",
-             Settings::values.toggle_framelimit);
-}
+TelemetrySession::TelemetrySession() = default;
 
 TelemetrySession::~TelemetrySession() {
     // Log one-time session end information
@@ -169,12 +150,106 @@ TelemetrySession::~TelemetrySession() {
                                 .count()};
     AddField(Telemetry::FieldType::Session, "Shutdown_Time", shutdown_time);
 
-    // Complete the session, submitting to web service if necessary
-    // This is just a placeholder to wrap up the session once the core completes and this is
-    // destroyed. This will be moved elsewhere once we are actually doing real I/O with the service.
+#ifdef ENABLE_WEB_SERVICE
+    auto backend = std::make_unique<WebService::TelemetryJson>(
+        Settings::values.web_api_url.GetValue(), Settings::values.yuzu_username.GetValue(),
+        Settings::values.yuzu_token.GetValue());
+#else
+    auto backend = std::make_unique<Telemetry::NullVisitor>();
+#endif
+
+    // Complete the session, submitting to the web service backend if necessary
     field_collection.Accept(*backend);
-    backend->Complete();
-    backend = nullptr;
+    if (Settings::values.enable_telemetry) {
+        backend->Complete();
+    }
+}
+
+void TelemetrySession::AddInitialInfo(Loader::AppLoader& app_loader,
+                                      const Service::FileSystem::FileSystemController& fsc,
+                                      const FileSys::ContentProvider& content_provider) {
+    // Log one-time top-level information
+    AddField(Telemetry::FieldType::None, "TelemetryId", GetTelemetryId());
+
+    // Log one-time session start information
+    const s64 init_time{std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count()};
+    AddField(Telemetry::FieldType::Session, "Init_Time", init_time);
+
+    u64 program_id{};
+    const Loader::ResultStatus res{app_loader.ReadProgramId(program_id)};
+    if (res == Loader::ResultStatus::Success) {
+        const std::string formatted_program_id{fmt::format("{:016X}", program_id)};
+        AddField(Telemetry::FieldType::Session, "ProgramId", formatted_program_id);
+
+        std::string name;
+        app_loader.ReadTitle(name);
+
+        if (name.empty()) {
+            const auto metadata = [&content_provider, &fsc, program_id] {
+                const FileSys::PatchManager pm{program_id, fsc, content_provider};
+                return pm.GetControlMetadata();
+            }();
+            if (metadata.first != nullptr) {
+                name = metadata.first->GetApplicationName();
+            }
+        }
+
+        if (!name.empty()) {
+            AddField(Telemetry::FieldType::Session, "ProgramName", name);
+        }
+    }
+
+    AddField(Telemetry::FieldType::Session, "ProgramFormat",
+             static_cast<u8>(app_loader.GetFileType()));
+
+    // Log application information
+    Telemetry::AppendBuildInfo(field_collection);
+
+    // Log user system information
+    Telemetry::AppendCPUInfo(field_collection);
+    Telemetry::AppendOSInfo(field_collection);
+
+    // Log user configuration information
+    constexpr auto field_type = Telemetry::FieldType::UserConfig;
+    AddField(field_type, "Audio_SinkId", Settings::values.sink_id.GetValue());
+    AddField(field_type, "Audio_EnableAudioStretching",
+             Settings::values.enable_audio_stretching.GetValue());
+    AddField(field_type, "Core_UseMultiCore", Settings::values.use_multi_core.GetValue());
+    AddField(field_type, "Renderer_Backend",
+             TranslateRenderer(Settings::values.renderer_backend.GetValue()));
+    AddField(field_type, "Renderer_ResolutionFactor",
+             Settings::values.resolution_factor.GetValue());
+    AddField(field_type, "Renderer_UseFrameLimit", Settings::values.use_frame_limit.GetValue());
+    AddField(field_type, "Renderer_FrameLimit", Settings::values.frame_limit.GetValue());
+    AddField(field_type, "Renderer_UseDiskShaderCache",
+             Settings::values.use_disk_shader_cache.GetValue());
+    AddField(field_type, "Renderer_GPUAccuracyLevel",
+             TranslateGPUAccuracyLevel(Settings::values.gpu_accuracy.GetValue()));
+    AddField(field_type, "Renderer_UseAsynchronousGpuEmulation",
+             Settings::values.use_asynchronous_gpu_emulation.GetValue());
+    AddField(field_type, "Renderer_UseNvdecEmulation",
+             Settings::values.use_nvdec_emulation.GetValue());
+    AddField(field_type, "Renderer_AccelerateASTC", Settings::values.accelerate_astc.GetValue());
+    AddField(field_type, "Renderer_UseVsync", Settings::values.use_vsync.GetValue());
+    AddField(field_type, "Renderer_UseAssemblyShaders",
+             Settings::values.use_assembly_shaders.GetValue());
+    AddField(field_type, "Renderer_UseAsynchronousShaders",
+             Settings::values.use_asynchronous_shaders.GetValue());
+    AddField(field_type, "System_UseDockedMode", Settings::values.use_docked_mode.GetValue());
+}
+
+bool TelemetrySession::SubmitTestcase() {
+#ifdef ENABLE_WEB_SERVICE
+    auto backend = std::make_unique<WebService::TelemetryJson>(
+        Settings::values.web_api_url.GetValue(), Settings::values.yuzu_username.GetValue(),
+        Settings::values.yuzu_token.GetValue());
+    field_collection.Accept(*backend);
+    return backend->SubmitTestcase();
+#else
+    return false;
+#endif
 }
 
 } // namespace Core

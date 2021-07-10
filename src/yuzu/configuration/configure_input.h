@@ -5,84 +5,68 @@
 #pragma once
 
 #include <array>
-#include <functional>
 #include <memory>
-#include <string>
-#include <unordered_map>
-#include <QKeyEvent>
-#include <QWidget>
-#include <boost/optional.hpp>
-#include "common/param_package.h"
-#include "core/settings.h"
-#include "input_common/main.h"
-#include "ui_configure_input.h"
 
-class QPushButton;
+#include <QKeyEvent>
+#include <QList>
+#include <QWidget>
+
+class QCheckBox;
 class QString;
 class QTimer;
+
+class ConfigureInputAdvanced;
+class ConfigureInputPlayer;
+
+class InputProfiles;
+
+namespace InputCommon {
+class InputSubsystem;
+}
 
 namespace Ui {
 class ConfigureInput;
 }
+
+void OnDockedModeChanged(bool last_state, bool new_state);
 
 class ConfigureInput : public QWidget {
     Q_OBJECT
 
 public:
     explicit ConfigureInput(QWidget* parent = nullptr);
+    ~ConfigureInput() override;
 
-    /// Save all button configurations to settings file
-    void applyConfiguration();
+    /// Initializes the input dialog with the given input subsystem.
+    void Initialize(InputCommon::InputSubsystem* input_subsystem_, std::size_t max_players = 8);
+
+    /// Save all button configurations to settings file.
+    void ApplyConfiguration();
+
+    QList<QWidget*> GetSubTabs() const;
 
 private:
-    std::unique_ptr<Ui::ConfigureInput> ui;
+    void changeEvent(QEvent* event) override;
+    void RetranslateUI();
+    void ClearAll();
 
-    std::unique_ptr<QTimer> timeout_timer;
-    std::unique_ptr<QTimer> poll_timer;
-
-    /// This will be the the setting function when an input is awaiting configuration.
-    boost::optional<std::function<void(const Common::ParamPackage&)>> input_setter;
-
-    std::array<Common::ParamPackage, Settings::NativeButton::NumButtons> buttons_param;
-    std::array<Common::ParamPackage, Settings::NativeAnalog::NumAnalogs> analogs_param;
-
-    static constexpr int ANALOG_SUB_BUTTONS_NUM = 5;
-
-    /// Each button input is represented by a QPushButton.
-    std::array<QPushButton*, Settings::NativeButton::NumButtons> button_map;
-
-    /// A group of five QPushButtons represent one analog input. The buttons each represent up,
-    /// down, left, right, and modifier, respectively.
-    std::array<std::array<QPushButton*, ANALOG_SUB_BUTTONS_NUM>, Settings::NativeAnalog::NumAnalogs>
-        analog_map_buttons;
-
-    /// Analog inputs are also represented each with a single button, used to configure with an
-    /// actual analog stick
-    std::array<QPushButton*, Settings::NativeAnalog::NumAnalogs> analog_map_stick;
-
-    static const std::array<std::string, ANALOG_SUB_BUTTONS_NUM> analog_sub_buttons;
-
-    std::vector<std::unique_ptr<InputCommon::Polling::DevicePoller>> device_pollers;
-
-    /// A flag to indicate if keyboard keys are okay when configuring an input. If this is false,
-    /// keyboard events are ignored.
-    bool want_keyboard_keys = false;
+    void UpdateDockedState(bool is_handheld);
+    void UpdateAllInputDevices();
+    void UpdateAllInputProfiles(std::size_t player_index);
 
     /// Load configuration settings.
-    void loadConfiguration();
+    void LoadConfiguration();
+    void LoadPlayerControllerIndices();
+
     /// Restore all buttons to their default values.
-    void restoreDefaults();
-    /// Update UI to reflect current configuration.
-    void updateButtonLabels();
+    void RestoreDefaults();
 
-    /// Called when the button was pressed.
-    void handleClick(QPushButton* button,
-                     std::function<void(const Common::ParamPackage&)> new_input_setter,
-                     InputCommon::Polling::DeviceType type);
+    std::unique_ptr<Ui::ConfigureInput> ui;
 
-    /// Finish polling and configure input using the input_setter
-    void setPollingResult(const Common::ParamPackage& params, bool abort);
+    std::unique_ptr<InputProfiles> profiles;
 
-    /// Handle key press events.
-    void keyPressEvent(QKeyEvent* event) override;
+    std::array<ConfigureInputPlayer*, 8> player_controllers;
+    std::array<QWidget*, 8> player_tabs;
+    std::array<QCheckBox*, 8> player_connected;
+    ConfigureInputAdvanced* advanced;
 };

@@ -6,16 +6,22 @@
 
 #include "core/hle/service/service.h"
 
-namespace Service {
-namespace Friend {
+namespace Core {
+class System;
+}
+
+namespace Service::Friend {
 
 class Module final {
 public:
     class Interface : public ServiceFramework<Interface> {
     public:
-        Interface(std::shared_ptr<Module> module, const char* name);
+        explicit Interface(std::shared_ptr<Module> module_, Core::System& system_,
+                           const char* name);
+        ~Interface() override;
 
-        void Unknown(Kernel::HLERequestContext& ctx);
+        void CreateFriendService(Kernel::HLERequestContext& ctx);
+        void CreateNotificationService(Kernel::HLERequestContext& ctx);
 
     protected:
         std::shared_ptr<Module> module;
@@ -23,7 +29,6 @@ public:
 };
 
 /// Registers all Friend services with the specified service manager.
-void InstallInterfaces(SM::ServiceManager& service_manager);
+void InstallInterfaces(SM::ServiceManager& service_manager, Core::System& system);
 
-} // namespace Friend
-} // namespace Service
+} // namespace Service::Friend

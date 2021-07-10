@@ -6,7 +6,6 @@
 
 #include <array>
 #include <deque>
-#include <boost/range/algorithm_ext/erase.hpp>
 
 namespace Common {
 
@@ -16,19 +15,19 @@ struct ThreadQueueList {
     //               (dynamically resizable) circular buffers to remove their overhead when
     //               inserting and popping.
 
-    typedef unsigned int Priority;
+    using Priority = unsigned int;
 
     // Number of priority levels. (Valid levels are [0..NUM_QUEUES).)
-    static const Priority NUM_QUEUES = N;
+    static constexpr Priority NUM_QUEUES = N;
 
     ThreadQueueList() {
         first = nullptr;
     }
 
     // Only for debugging, returns priority level.
-    Priority contains(const T& uid) {
+    [[nodiscard]] Priority contains(const T& uid) const {
         for (Priority i = 0; i < NUM_QUEUES; ++i) {
-            Queue& cur = queues[i];
+            const Queue& cur = queues[i];
             if (std::find(cur.data.cbegin(), cur.data.cend(), uid) != cur.data.cend()) {
                 return i;
             }
@@ -37,11 +36,27 @@ struct ThreadQueueList {
         return -1;
     }
 
-    T get_first() {
-        Queue* cur = first;
+    [[nodiscard]] T get_first() const {
+        const Queue* cur = first;
         while (cur != nullptr) {
             if (!cur->data.empty()) {
                 return cur->data.front();
+            }
+            cur = cur->next_nonempty;
+        }
+
+        return T();
+    }
+
+    template <typename UnaryPredicate>
+    [[nodiscard]] T get_first_filter(UnaryPredicate filter) const {
+        const Queue* cur = first;
+        while (cur != nullptr) {
+            if (!cur->data.empty()) {
+                for (const auto& item : cur->data) {
+                    if (filter(item))
+                        return item;
+                }
             }
             cur = cur->next_nonempty;
         }
@@ -95,8 +110,9 @@ struct ThreadQueueList {
     }
 
     void remove(Priority priority, const T& thread_id) {
-        Queue* cur = &queues[priority];
-        boost::remove_erase(cur->data, thread_id);
+        Queue* const cur = &queues[priority];
+        const auto iter = std::remove(cur->data.begin(), cur->data.end(), thread_id);
+        cur->data.erase(iter, cur->data.end());
     }
 
     void rotate(Priority priority) {
@@ -113,7 +129,7 @@ struct ThreadQueueList {
         first = nullptr;
     }
 
-    bool empty(Priority priority) const {
+    [[nodiscard]] bool empty(Priority priority) const {
         const Queue* cur = &queues[priority];
         return cur->data.empty();
     }

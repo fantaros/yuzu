@@ -6,20 +6,22 @@
 
 #include "core/hle/service/service.h"
 
-namespace Service {
-namespace SM {
+namespace Core {
+class System;
+}
+
+namespace Service::SM {
 
 class Controller final : public ServiceFramework<Controller> {
 public:
-    Controller();
-    ~Controller() = default;
+    explicit Controller(Core::System& system_);
+    ~Controller() override;
 
 private:
-    void ConvertSessionToDomain(Kernel::HLERequestContext& ctx);
-    void DuplicateSession(Kernel::HLERequestContext& ctx);
-    void DuplicateSessionEx(Kernel::HLERequestContext& ctx);
+    void ConvertCurrentObjectToDomain(Kernel::HLERequestContext& ctx);
+    void CloneCurrentObject(Kernel::HLERequestContext& ctx);
+    void CloneCurrentObjectEx(Kernel::HLERequestContext& ctx);
     void QueryPointerBufferSize(Kernel::HLERequestContext& ctx);
 };
 
-} // namespace SM
-} // namespace Service
+} // namespace Service::SM

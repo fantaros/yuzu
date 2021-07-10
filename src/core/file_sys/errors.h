@@ -8,22 +8,14 @@
 
 namespace FileSys {
 
-namespace ErrCodes {
-enum {
-    NotFound = 1,
-};
-}
-
-constexpr ResultCode ERROR_PATH_NOT_FOUND(ErrorModule::FS, ErrCodes::NotFound);
-
-// TODO(bunnei): Replace these with correct errors for Switch OS
-constexpr ResultCode ERROR_INVALID_PATH(ResultCode(-1));
-constexpr ResultCode ERROR_UNSUPPORTED_OPEN_FLAGS(ResultCode(-1));
-constexpr ResultCode ERROR_INVALID_OPEN_FLAGS(ResultCode(-1));
-constexpr ResultCode ERROR_FILE_NOT_FOUND(ResultCode(-1));
-constexpr ResultCode ERROR_UNEXPECTED_FILE_OR_DIRECTORY(ResultCode(-1));
-constexpr ResultCode ERROR_DIRECTORY_ALREADY_EXISTS(ResultCode(-1));
-constexpr ResultCode ERROR_FILE_ALREADY_EXISTS(ResultCode(-1));
-constexpr ResultCode ERROR_DIRECTORY_NOT_EMPTY(ResultCode(-1));
+constexpr ResultCode ERROR_PATH_NOT_FOUND{ErrorModule::FS, 1};
+constexpr ResultCode ERROR_PATH_ALREADY_EXISTS{ErrorModule::FS, 2};
+constexpr ResultCode ERROR_ENTITY_NOT_FOUND{ErrorModule::FS, 1002};
+constexpr ResultCode ERROR_SD_CARD_NOT_FOUND{ErrorModule::FS, 2001};
+constexpr ResultCode ERROR_OUT_OF_BOUNDS{ErrorModule::FS, 3005};
+constexpr ResultCode ERROR_FAILED_MOUNT_ARCHIVE{ErrorModule::FS, 3223};
+constexpr ResultCode ERROR_INVALID_ARGUMENT{ErrorModule::FS, 6001};
+constexpr ResultCode ERROR_INVALID_OFFSET{ErrorModule::FS, 6061};
+constexpr ResultCode ERROR_INVALID_SIZE{ErrorModule::FS, 6062};
 
 } // namespace FileSys

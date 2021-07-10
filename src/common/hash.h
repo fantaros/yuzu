@@ -5,22 +5,18 @@
 #pragma once
 
 #include <cstddef>
-#include "common/common_types.h"
+#include <utility>
+#include <boost/functional/hash.hpp>
 
 namespace Common {
 
-void MurmurHash3_128(const void* key, size_t len, u32 seed, void* out);
-
-/**
- * Computes a 64-bit hash over the specified block of data
- * @param data Block of data to compute hash over
- * @param len Length of data (in bytes) to compute hash over
- * @returns 64-bit hash value that was computed over the data block
- */
-static inline u64 ComputeHash64(const void* data, size_t len) {
-    u64 res[2];
-    MurmurHash3_128(data, len, 0, res);
-    return res[0];
-}
+struct PairHash {
+    template <class T1, class T2>
+    std::size_t operator()(const std::pair<T1, T2>& pair) const noexcept {
+        std::size_t seed = std::hash<T1>()(pair.first);
+        boost::hash_combine(seed, std::hash<T2>()(pair.second));
+        return seed;
+    }
+};
 
 } // namespace Common

@@ -2,31 +2,116 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
+#include "common/assert.h"
 #include "common/logging/log.h"
+#include "core/file_sys/errors.h"
+#include "core/file_sys/system_archive/system_version.h"
 #include "core/hle/ipc_helpers.h"
-#include "core/hle/kernel/client_port.h"
+#include "core/hle/kernel/k_client_port.h"
+#include "core/hle/service/filesystem/filesystem.h"
 #include "core/hle/service/set/set_sys.h"
 
-namespace Service {
-namespace Set {
+namespace Service::Set {
+
+namespace {
+constexpr u64 SYSTEM_VERSION_FILE_MINOR_REVISION_OFFSET = 0x05;
+
+enum class GetFirmwareVersionType {
+    Version1,
+    Version2,
+};
+
+void GetFirmwareVersionImpl(Kernel::HLERequestContext& ctx, GetFirmwareVersionType type) {
+    LOG_WARNING(Service_SET, "called - Using hardcoded firmware version '{}'",
+                FileSys::SystemArchive::GetLongDisplayVersion());
+
+    ASSERT_MSG(ctx.GetWriteBufferSize() == 0x100,
+               "FirmwareVersion output buffer must be 0x100 bytes in size!");
+
+    // Instead of using the normal procedure of checking for the real system archive and if it
+    // doesn't exist, synthesizing one, I feel that that would lead to strange bugs because a
+    // used is using a really old or really new SystemVersion title. The synthesized one ensures
+    // consistence (currently reports as 5.1.0-0.0)
+    const auto archive = FileSys::SystemArchive::SystemVersion();
+
+    const auto early_exit_failure = [&ctx](std::string_view desc, ResultCode code) {
+        LOG_ERROR(Service_SET, "General failure while attempting to resolve firmware version ({}).",
+                  desc);
+        IPC::ResponseBuilder rb{ctx, 2};
+        rb.Push(code);
+    };
+
+    if (archive == nullptr) {
+        early_exit_failure("The system version archive couldn't be synthesized.",
+                           FileSys::ERROR_FAILED_MOUNT_ARCHIVE);
+        return;
+    }
+
+    const auto ver_file = archive->GetFile("file");
+    if (ver_file == nullptr) {
+        early_exit_failure("The system version archive didn't contain the file 'file'.",
+                           FileSys::ERROR_INVALID_ARGUMENT);
+        return;
+    }
+
+    auto data = ver_file->ReadAllBytes();
+    if (data.size() != 0x100) {
+        early_exit_failure("The system version file 'file' was not the correct size.",
+                           FileSys::ERROR_OUT_OF_BOUNDS);
+        return;
+    }
+
+    // If the command is GetFirmwareVersion (as opposed to GetFirmwareVersion2), hardware will
+    // zero out the REVISION_MINOR field.
+    if (type == GetFirmwareVersionType::Version1) {
+        data[SYSTEM_VERSION_FILE_MINOR_REVISION_OFFSET] = 0;
+    }
+
+    ctx.WriteBuffer(data);
+
+    IPC::ResponseBuilder rb{ctx, 2};
+    rb.Push(ResultSuccess);
+}
+} // Anonymous namespace
+
+void SET_SYS::GetFirmwareVersion(Kernel::HLERequestContext& ctx) {
+    LOG_DEBUG(Service_SET, "called");
+    GetFirmwareVersionImpl(ctx, GetFirmwareVersionType::Version1);
+}
+
+void SET_SYS::GetFirmwareVersion2(Kernel::HLERequestContext& ctx) {
+    LOG_DEBUG(Service_SET, "called");
+    GetFirmwareVersionImpl(ctx, GetFirmwareVersionType::Version2);
+}
 
 void SET_SYS::GetColorSetId(Kernel::HLERequestContext& ctx) {
+    LOG_DEBUG(Service_SET, "called");
 
     IPC::ResponseBuilder rb{ctx, 3};
 
-    rb.Push(RESULT_SUCCESS);
-    rb.Push<u32>(0);
-
-    LOG_WARNING(Service_SET, "(STUBBED) called");
+    rb.Push(ResultSuccess);
+    rb.PushEnum(color_set);
 }
 
-SET_SYS::SET_SYS() : ServiceFramework("set:sys") {
+void SET_SYS::SetColorSetId(Kernel::HLERequestContext& ctx) {
+    LOG_DEBUG(Service_SET, "called");
+
+    IPC::RequestParser rp{ctx};
+    color_set = rp.PopEnum<ColorSet>();
+
+    IPC::ResponseBuilder rb{ctx, 2};
+    rb.Push(ResultSuccess);
+}
+
+SET_SYS::SET_SYS(Core::System& system_) : ServiceFramework{system_, "set:sys"} {
+    // clang-format off
     static const FunctionInfo functions[] = {
         {0, nullptr, "SetLanguageCode"},
         {1, nullptr, "SetNetworkSettings"},
         {2, nullptr, "GetNetworkSettings"},
-        {3, nullptr, "GetFirmwareVersion"},
-        {4, nullptr, "GetFirmwareVersion2"},
+        {3, &SET_SYS::GetFirmwareVersion, "GetFirmwareVersion"},
+        {4, &SET_SYS::GetFirmwareVersion2, "GetFirmwareVersion2"},
+        {5, nullptr, "GetFirmwareVersionDigest"},
         {7, nullptr, "GetLockScreenFlag"},
         {8, nullptr, "SetLockScreenFlag"},
         {9, nullptr, "GetBacklightSettings"},
@@ -44,7 +129,7 @@ SET_SYS::SET_SYS() : ServiceFramework("set:sys") {
         {21, nullptr, "GetEulaVersions"},
         {22, nullptr, "SetEulaVersions"},
         {23, &SET_SYS::GetColorSetId, "GetColorSetId"},
-        {24, nullptr, "SetColorSetId"},
+        {24, &SET_SYS::SetColorSetId, "SetColorSetId"},
         {25, nullptr, "GetConsoleInformationUploadFlag"},
         {26, nullptr, "SetConsoleInformationUploadFlag"},
         {27, nullptr, "GetAutomaticApplicationDownloadFlag"},
@@ -159,9 +244,76 @@ SET_SYS::SET_SYS() : ServiceFramework("set:sys") {
         {138, nullptr, "GetWebInspectorFlag"},
         {139, nullptr, "GetAllowedSslHosts"},
         {140, nullptr, "GetHostFsMountPoint"},
+        {141, nullptr, "GetRequiresRunRepairTimeReviser"},
+        {142, nullptr, "SetRequiresRunRepairTimeReviser"},
+        {143, nullptr, "SetBlePairingSettings"},
+        {144, nullptr, "GetBlePairingSettings"},
+        {145, nullptr, "GetConsoleSixAxisSensorAngularVelocityTimeBias"},
+        {146, nullptr, "SetConsoleSixAxisSensorAngularVelocityTimeBias"},
+        {147, nullptr, "GetConsoleSixAxisSensorAngularAcceleration"},
+        {148, nullptr, "SetConsoleSixAxisSensorAngularAcceleration"},
+        {149, nullptr, "GetRebootlessSystemUpdateVersion"},
+        {150, nullptr, "GetDeviceTimeZoneLocationUpdatedTime"},
+        {151, nullptr, "SetDeviceTimeZoneLocationUpdatedTime"},
+        {152, nullptr, "GetUserSystemClockAutomaticCorrectionUpdatedTime"},
+        {153, nullptr, "SetUserSystemClockAutomaticCorrectionUpdatedTime"},
+        {154, nullptr, "GetAccountOnlineStorageSettings"},
+        {155, nullptr, "SetAccountOnlineStorageSettings"},
+        {156, nullptr, "GetPctlReadyFlag"},
+        {157, nullptr, "SetPctlReadyFlag"},
+        {158, nullptr, "GetAnalogStickUserCalibrationL"},
+        {159, nullptr, "SetAnalogStickUserCalibrationL"},
+        {160, nullptr, "GetAnalogStickUserCalibrationR"},
+        {161, nullptr, "SetAnalogStickUserCalibrationR"},
+        {162, nullptr, "GetPtmBatteryVersion"},
+        {163, nullptr, "SetPtmBatteryVersion"},
+        {164, nullptr, "GetUsb30HostEnableFlag"},
+        {165, nullptr, "SetUsb30HostEnableFlag"},
+        {166, nullptr, "GetUsb30DeviceEnableFlag"},
+        {167, nullptr, "SetUsb30DeviceEnableFlag"},
+        {168, nullptr, "GetThemeId"},
+        {169, nullptr, "SetThemeId"},
+        {170, nullptr, "GetChineseTraditionalInputMethod"},
+        {171, nullptr, "SetChineseTraditionalInputMethod"},
+        {172, nullptr, "GetPtmCycleCountReliability"},
+        {173, nullptr, "SetPtmCycleCountReliability"},
+        {174, nullptr, "GetHomeMenuScheme"},
+        {175, nullptr, "GetThemeSettings"},
+        {176, nullptr, "SetThemeSettings"},
+        {177, nullptr, "GetThemeKey"},
+        {178, nullptr, "SetThemeKey"},
+        {179, nullptr, "GetZoomFlag"},
+        {180, nullptr, "SetZoomFlag"},
+        {181, nullptr, "GetT"},
+        {182, nullptr, "SetT"},
+        {183, nullptr, "GetPlatformRegion"},
+        {184, nullptr, "SetPlatformRegion"},
+        {185, nullptr, "GetHomeMenuSchemeModel"},
+        {186, nullptr, "GetMemoryUsageRateFlag"},
+        {187, nullptr, "GetTouchScreenMode"},
+        {188, nullptr, "SetTouchScreenMode"},
+        {189, nullptr, "GetButtonConfigSettingsFull"},
+        {190, nullptr, "SetButtonConfigSettingsFull"},
+        {191, nullptr, "GetButtonConfigSettingsEmbedded"},
+        {192, nullptr, "SetButtonConfigSettingsEmbedded"},
+        {193, nullptr, "GetButtonConfigSettingsLeft"},
+        {194, nullptr, "SetButtonConfigSettingsLeft"},
+        {195, nullptr, "GetButtonConfigSettingsRight"},
+        {196, nullptr, "SetButtonConfigSettingsRight"},
+        {197, nullptr, "GetButtonConfigRegisteredSettingsEmbedded"},
+        {198, nullptr, "SetButtonConfigRegisteredSettingsEmbedded"},
+        {199, nullptr, "GetButtonConfigRegisteredSettings"},
+        {200, nullptr, "SetButtonConfigRegisteredSettings"},
+        {201, nullptr, "GetFieldTestingFlag"},
+        {202, nullptr, "SetFieldTestingFlag"},
+        {203, nullptr, "GetPanelCrcMode"},
+        {204, nullptr, "SetPanelCrcMode"},
     };
+    // clang-format on
+
     RegisterHandlers(functions);
 }
 
-} // namespace Set
-} // namespace Service
+SET_SYS::~SET_SYS() = default;
+
+} // namespace Service::Set

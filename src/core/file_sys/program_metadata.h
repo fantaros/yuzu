@@ -5,21 +5,23 @@
 #pragma once
 
 #include <array>
-#include <string>
 #include <vector>
 #include "common/bit_field.h"
 #include "common/common_types.h"
 #include "common/swap.h"
+#include "core/file_sys/vfs_types.h"
 
 namespace Loader {
-enum class ResultStatus;
+enum class ResultStatus : u16;
 }
 
 namespace FileSys {
 
 enum class ProgramAddressSpaceType : u8 {
-    Is64Bit = 1,
-    Is32Bit = 2,
+    Is32Bit = 0,
+    Is36Bit = 1,
+    Is32BitNoMap = 2,
+    Is39Bit = 3,
 };
 
 enum class ProgramFilePermission : u64 {
@@ -37,8 +39,28 @@ enum class ProgramFilePermission : u64 {
  */
 class ProgramMetadata {
 public:
-    Loader::ResultStatus Load(const std::string& file_path);
-    Loader::ResultStatus Load(const std::vector<u8> file_data, size_t offset = 0);
+    using KernelCapabilityDescriptors = std::vector<u32>;
+
+    ProgramMetadata();
+    ~ProgramMetadata();
+
+    ProgramMetadata(const ProgramMetadata&) = default;
+    ProgramMetadata& operator=(const ProgramMetadata&) = default;
+
+    ProgramMetadata(ProgramMetadata&&) = default;
+    ProgramMetadata& operator=(ProgramMetadata&&) = default;
+
+    /// Gets a default ProgramMetadata configuration, should only be used for homebrew formats where
+    /// we do not have an NPDM file
+    static ProgramMetadata GetDefault();
+
+    Loader::ResultStatus Load(VirtualFile file);
+
+    /// Load from parameters instead of NPDM file, used for KIP
+    void LoadManual(bool is_64_bit, ProgramAddressSpaceType address_space, s32 main_thread_prio,
+                    u32 main_thread_core, u32 main_thread_stack_size, u64 title_id,
+                    u64 filesystem_permissions, u32 system_resource_size,
+                    KernelCapabilityDescriptors capabilities);
 
     bool Is64BitProgram() const;
     ProgramAddressSpaceType GetAddressSpaceType() const;
@@ -47,6 +69,8 @@ public:
     u32 GetMainThreadStackSize() const;
     u64 GetTitleID() const;
     u64 GetFilesystemPermissions() const;
+    u32 GetSystemResourceSize() const;
+    const KernelCapabilityDescriptors& GetKernelCapabilities() const;
 
     void Print() const;
 
@@ -64,7 +88,8 @@ private:
         u8 reserved_3;
         u8 main_thread_priority;
         u8 main_thread_cpu;
-        std::array<u8, 8> reserved_4;
+        std::array<u8, 4> reserved_4;
+        u32_le system_resource_size;
         u32_le process_category;
         u32_le main_stack_size;
         std::array<u8, 0x10> application_name;
@@ -149,6 +174,8 @@ private:
 
     FileAccessControl acid_file_access;
     FileAccessHeader aci_file_access;
+
+    KernelCapabilityDescriptors aci_kernel_capabilities;
 };
 
 } // namespace FileSys

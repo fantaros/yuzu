@@ -4,52 +4,56 @@
 
 #pragma once
 
-#include <algorithm>
 #include <cstdlib>
 #include <type_traits>
 
-namespace MathUtil {
+namespace Common {
 
-static constexpr float PI = 3.14159265f;
-
-inline bool IntervalsIntersect(unsigned start0, unsigned length0, unsigned start1,
-                               unsigned length1) {
-    return (std::max(start0, start1) < std::min(start0 + length0, start1 + length1));
-}
-
-template <typename T>
-inline T Clamp(const T val, const T& min, const T& max) {
-    return std::max(min, std::min(max, val));
-}
+constexpr float PI = 3.1415926535f;
 
 template <class T>
 struct Rectangle {
-    T left;
-    T top;
-    T right;
-    T bottom;
+    T left{};
+    T top{};
+    T right{};
+    T bottom{};
 
-    Rectangle() {}
+    constexpr Rectangle() = default;
 
-    Rectangle(T left, T top, T right, T bottom)
-        : left(left), top(top), right(right), bottom(bottom) {}
+    constexpr Rectangle(T left_, T top_, T right_, T bottom_)
+        : left(left_), top(top_), right(right_), bottom(bottom_) {}
 
-    T GetWidth() const {
-        return std::abs(static_cast<typename std::make_signed<T>::type>(right - left));
+    [[nodiscard]] T GetWidth() const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::abs(right - left);
+        } else {
+            return static_cast<T>(std::abs(static_cast<std::make_signed_t<T>>(right - left)));
+        }
     }
-    T GetHeight() const {
-        return std::abs(static_cast<typename std::make_signed<T>::type>(bottom - top));
+
+    [[nodiscard]] T GetHeight() const {
+        if constexpr (std::is_floating_point_v<T>) {
+            return std::abs(bottom - top);
+        } else {
+            return static_cast<T>(std::abs(static_cast<std::make_signed_t<T>>(bottom - top)));
+        }
     }
-    Rectangle<T> TranslateX(const T x) const {
+
+    [[nodiscard]] Rectangle<T> TranslateX(const T x) const {
         return Rectangle{left + x, top, right + x, bottom};
     }
-    Rectangle<T> TranslateY(const T y) const {
+
+    [[nodiscard]] Rectangle<T> TranslateY(const T y) const {
         return Rectangle{left, top + y, right, bottom + y};
     }
-    Rectangle<T> Scale(const float s) const {
+
+    [[nodiscard]] Rectangle<T> Scale(const float s) const {
         return Rectangle{left, top, static_cast<T>(left + GetWidth() * s),
                          static_cast<T>(top + GetHeight() * s)};
     }
 };
 
-} // namespace MathUtil
+template <typename T>
+Rectangle(T, T, T, T) -> Rectangle<T>;
+
+} // namespace Common

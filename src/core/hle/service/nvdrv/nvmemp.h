@@ -6,18 +6,20 @@
 
 #include "core/hle/service/service.h"
 
-namespace Service {
-namespace Nvidia {
+namespace Core {
+class System;
+}
+
+namespace Service::Nvidia {
 
 class NVMEMP final : public ServiceFramework<NVMEMP> {
 public:
-    NVMEMP();
-    ~NVMEMP() = default;
+    explicit NVMEMP(Core::System& system_);
+    ~NVMEMP() override;
 
 private:
-    void Unknown0(Kernel::HLERequestContext& ctx);
-    void Unknown1(Kernel::HLERequestContext& ctx);
+    void Open(Kernel::HLERequestContext& ctx);
+    void GetAruid(Kernel::HLERequestContext& ctx);
 };
 
-} // namespace Nvidia
-} // namespace Service
+} // namespace Service::Nvidia

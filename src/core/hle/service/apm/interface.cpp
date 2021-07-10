@@ -5,17 +5,19 @@
 #include "common/logging/log.h"
 #include "core/hle/ipc_helpers.h"
 #include "core/hle/service/apm/apm.h"
+#include "core/hle/service/apm/controller.h"
 #include "core/hle/service/apm/interface.h"
 
-namespace Service {
-namespace APM {
+namespace Service::APM {
 
 class ISession final : public ServiceFramework<ISession> {
 public:
-    ISession() : ServiceFramework("ISession") {
+    explicit ISession(Core::System& system_, Controller& controller_)
+        : ServiceFramework{system_, "ISession"}, controller{controller_} {
         static const FunctionInfo functions[] = {
             {0, &ISession::SetPerformanceConfiguration, "SetPerformanceConfiguration"},
             {1, &ISession::GetPerformanceConfiguration, "GetPerformanceConfiguration"},
+            {2, nullptr, "SetCpuOverclockEnabled"},
         };
         RegisterHandlers(functions);
     }
@@ -24,43 +26,113 @@ private:
     void SetPerformanceConfiguration(Kernel::HLERequestContext& ctx) {
         IPC::RequestParser rp{ctx};
 
-        auto mode = static_cast<PerformanceMode>(rp.Pop<u32>());
-        u32 config = rp.Pop<u32>();
+        const auto mode = rp.PopEnum<PerformanceMode>();
+        const auto config = rp.PopEnum<PerformanceConfiguration>();
+        LOG_DEBUG(Service_APM, "called mode={} config={}", mode, config);
+
+        controller.SetPerformanceConfiguration(mode, config);
 
         IPC::ResponseBuilder rb{ctx, 2};
-        rb.Push(RESULT_SUCCESS);
-
-        LOG_WARNING(Service_APM, "(STUBBED) called mode=%u config=%u", static_cast<u32>(mode),
-                    config);
+        rb.Push(ResultSuccess);
     }
 
     void GetPerformanceConfiguration(Kernel::HLERequestContext& ctx) {
         IPC::RequestParser rp{ctx};
 
-        auto mode = static_cast<PerformanceMode>(rp.Pop<u32>());
+        const auto mode = rp.PopEnum<PerformanceMode>();
+        LOG_DEBUG(Service_APM, "called mode={}", mode);
 
         IPC::ResponseBuilder rb{ctx, 3};
-        rb.Push(RESULT_SUCCESS);
-        rb.Push<u32>(0); // Performance configuration
-
-        LOG_WARNING(Service_APM, "(STUBBED) called mode=%u", static_cast<u32>(mode));
+        rb.Push(ResultSuccess);
+        rb.PushEnum(controller.GetCurrentPerformanceConfiguration(mode));
     }
+
+    Controller& controller;
 };
 
-APM::APM(std::shared_ptr<Module> apm, const char* name)
-    : ServiceFramework(name), apm(std::move(apm)) {
+APM::APM(Core::System& system_, std::shared_ptr<Module> apm_, Controller& controller_,
+         const char* name)
+    : ServiceFramework{system_, name}, apm(std::move(apm_)), controller{controller_} {
     static const FunctionInfo functions[] = {
         {0, &APM::OpenSession, "OpenSession"},
-        {1, nullptr, "GetPerformanceMode"},
+        {1, &APM::GetPerformanceMode, "GetPerformanceMode"},
+        {6, &APM::IsCpuOverclockEnabled, "IsCpuOverclockEnabled"},
     };
     RegisterHandlers(functions);
 }
 
+APM::~APM() = default;
+
 void APM::OpenSession(Kernel::HLERequestContext& ctx) {
+    LOG_DEBUG(Service_APM, "called");
+
     IPC::ResponseBuilder rb{ctx, 2, 0, 1};
-    rb.Push(RESULT_SUCCESS);
-    rb.PushIpcInterface<ISession>();
+    rb.Push(ResultSuccess);
+    rb.PushIpcInterface<ISession>(system, controller);
 }
 
-} // namespace APM
-} // namespace Service
+void APM::GetPerformanceMode(Kernel::HLERequestContext& ctx) {
+    LOG_DEBUG(Service_APM, "called");
+
+    IPC::ResponseBuilder rb{ctx, 2};
+    rb.PushEnum(controller.GetCurrentPerformanceMode());
+}
+
+void APM::IsCpuOverclockEnabled(Kernel::HLERequestContext& ctx) {
+    LOG_WARNING(Service_APM, "(STUBBED) called");
+
+    IPC::ResponseBuilder rb{ctx, 3};
+    rb.Push(ResultSuccess);
+    rb.Push(false);
+}
+
+APM_Sys::APM_Sys(Core::System& system_, Controller& controller_)
+    : ServiceFramework{system_, "apm:sys"}, controller{controller_} {
+    // clang-format off
+    static const FunctionInfo functions[] = {
+        {0, nullptr, "RequestPerformanceMode"},
+        {1, &APM_Sys::GetPerformanceEvent, "GetPerformanceEvent"},
+        {2, nullptr, "GetThrottlingState"},
+        {3, nullptr, "GetLastThrottlingState"},
+        {4, nullptr, "ClearLastThrottlingState"},
+        {5, nullptr, "LoadAndApplySettings"},
+        {6, &APM_Sys::SetCpuBoostMode, "SetCpuBoostMode"},
+        {7, &APM_Sys::GetCurrentPerformanceConfiguration, "GetCurrentPerformanceConfiguration"},
+    };
+    // clang-format on
+
+    RegisterHandlers(functions);
+}
+
+APM_Sys::~APM_Sys() = default;
+
+void APM_Sys::GetPerformanceEvent(Kernel::HLERequestContext& ctx) {
+    LOG_DEBUG(Service_APM, "called");
+
+    IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+    rb.Push(ResultSuccess);
+    rb.PushIpcInterface<ISession>(system, controller);
+}
+
+void APM_Sys::SetCpuBoostMode(Kernel::HLERequestContext& ctx) {
+    IPC::RequestParser rp{ctx};
+    const auto mode = rp.PopEnum<CpuBoostMode>();
+
+    LOG_DEBUG(Service_APM, "called, mode={:08X}", mode);
+
+    controller.SetFromCpuBoostMode(mode);
+
+    IPC::ResponseBuilder rb{ctx, 2};
+    rb.Push(ResultSuccess);
+}
+
+void APM_Sys::GetCurrentPerformanceConfiguration(Kernel::HLERequestContext& ctx) {
+    LOG_DEBUG(Service_APM, "called");
+
+    IPC::ResponseBuilder rb{ctx, 3};
+    rb.Push(ResultSuccess);
+    rb.PushEnum(
+        controller.GetCurrentPerformanceConfiguration(controller.GetCurrentPerformanceMode()));
+}
+
+} // namespace Service::APM

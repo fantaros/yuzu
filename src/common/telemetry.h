@@ -10,12 +10,12 @@
 #include <string>
 #include "common/common_types.h"
 
-namespace Telemetry {
+namespace Common::Telemetry {
 
 /// Field type, used for grouping fields together in the final submitted telemetry log
 enum class FieldType : u8 {
     None = 0,     ///< No specified field group
-    App,          ///< Citra application fields (e.g. version, branch, etc.)
+    App,          ///< yuzu application fields (e.g. version, branch, etc.)
     Session,      ///< Emulated session fields (e.g. title ID, log, etc.)
     Performance,  ///< Emulated performance (e.g. fps, emulated CPU speed, etc.)
     UserFeedback, ///< User submitted feedback (e.g. star rating, user notes, etc.)
@@ -52,54 +52,41 @@ public:
 template <typename T>
 class Field : public FieldInterface {
 public:
-    Field(FieldType type, std::string name, const T& value)
-        : name(std::move(name)), type(type), value(value) {}
+    Field(FieldType type_, std::string name_, T value_)
+        : name(std::move(name_)), type(type_), value(std::move(value_)) {}
 
-    Field(FieldType type, std::string name, T&& value)
-        : name(std::move(name)), type(type), value(std::move(value)) {}
+    Field(const Field&) = default;
+    Field& operator=(const Field&) = default;
 
-    Field(const Field& other) : Field(other.type, other.name, other.value) {}
-
-    Field& operator=(const Field& other) {
-        type = other.type;
-        name = other.name;
-        value = other.value;
-        return *this;
-    }
-
-    Field& operator=(Field&& other) {
-        type = other.type;
-        name = std::move(other.name);
-        value = std::move(other.value);
-        return *this;
-    }
+    Field(Field&&) = default;
+    Field& operator=(Field&& other) = default;
 
     void Accept(VisitorInterface& visitor) const override;
 
-    const std::string& GetName() const override {
+    [[nodiscard]] const std::string& GetName() const override {
         return name;
     }
 
     /**
      * Returns the type of the field.
      */
-    FieldType GetType() const {
+    [[nodiscard]] FieldType GetType() const {
         return type;
     }
 
     /**
      * Returns the value of the field.
      */
-    const T& GetValue() const {
+    [[nodiscard]] const T& GetValue() const {
         return value;
     }
 
-    inline bool operator==(const Field<T>& other) {
+    [[nodiscard]] bool operator==(const Field& other) const {
         return (type == other.type) && (name == other.name) && (value == other.value);
     }
 
-    inline bool operator!=(const Field<T>& other) {
-        return !(*this == other);
+    [[nodiscard]] bool operator!=(const Field& other) const {
+        return !operator==(other);
     }
 
 private:
@@ -166,6 +153,7 @@ struct VisitorInterface : NonCopyable {
 
     /// Completion method, called once all fields have been visited
     virtual void Complete() = 0;
+    virtual bool SubmitTestcase() = 0;
 };
 
 /**
@@ -191,6 +179,21 @@ struct NullVisitor : public VisitorInterface {
     void Visit(const Field<std::chrono::microseconds>& /*field*/) override {}
 
     void Complete() override {}
+    bool SubmitTestcase() override {
+        return false;
+    }
 };
 
-} // namespace Telemetry
+/// Appends build-specific information to the given FieldCollection,
+/// such as branch name, revision hash, etc.
+void AppendBuildInfo(FieldCollection& fc);
+
+/// Appends CPU-specific information to the given FieldCollection,
+/// such as instruction set extensions, etc.
+void AppendCPUInfo(FieldCollection& fc);
+
+/// Appends OS-specific information to the given FieldCollection,
+/// such as platform name, etc.
+void AppendOSInfo(FieldCollection& fc);
+
+} // namespace Common::Telemetry

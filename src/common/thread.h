@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -11,38 +12,12 @@
 #include <thread>
 #include "common/common_types.h"
 
-// Support for C++11's thread_local keyword was surprisingly spotty in compilers until very
-// recently. Fortunately, thread local variables have been well supported for compilers for a while,
-// but with semantics supporting only POD types, so we can use a few defines to get some amount of
-// backwards compat support.
-// WARNING: This only works correctly with POD types.
-#if defined(__clang__)
-#if !__has_feature(cxx_thread_local)
-#define thread_local __thread
-#endif
-#elif defined(__GNUC__)
-#if __GNUC__ < 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 8)
-#define thread_local __thread
-#endif
-#elif defined(_MSC_VER)
-#if _MSC_VER < 1900
-#define thread_local __declspec(thread)
-#endif
-#endif
-
 namespace Common {
-
-int CurrentThreadId();
-
-void SetThreadAffinity(std::thread::native_handle_type thread, u32 mask);
-void SetCurrentThreadAffinity(u32 mask);
 
 class Event {
 public:
-    Event() : is_set(false) {}
-
     void Set() {
-        std::lock_guard<std::mutex> lk(mutex);
+        std::lock_guard lk{mutex};
         if (!is_set) {
             is_set = true;
             condvar.notify_one();
@@ -50,41 +25,49 @@ public:
     }
 
     void Wait() {
-        std::unique_lock<std::mutex> lk(mutex);
-        condvar.wait(lk, [&] { return is_set; });
+        std::unique_lock lk{mutex};
+        condvar.wait(lk, [&] { return is_set.load(); });
         is_set = false;
+    }
+
+    bool WaitFor(const std::chrono::nanoseconds& time) {
+        std::unique_lock lk{mutex};
+        if (!condvar.wait_for(lk, time, [this] { return is_set.load(); }))
+            return false;
+        is_set = false;
+        return true;
     }
 
     template <class Clock, class Duration>
     bool WaitUntil(const std::chrono::time_point<Clock, Duration>& time) {
-        std::unique_lock<std::mutex> lk(mutex);
-        if (!condvar.wait_until(lk, time, [this] { return is_set; }))
+        std::unique_lock lk{mutex};
+        if (!condvar.wait_until(lk, time, [this] { return is_set.load(); }))
             return false;
         is_set = false;
         return true;
     }
 
     void Reset() {
-        std::unique_lock<std::mutex> lk(mutex);
+        std::unique_lock lk{mutex};
         // no other action required, since wait loops on the predicate and any lingering signal will
         // get cleared on the first iteration
         is_set = false;
     }
 
 private:
-    bool is_set;
     std::condition_variable condvar;
     std::mutex mutex;
+    std::atomic_bool is_set{false};
 };
 
 class Barrier {
 public:
-    explicit Barrier(size_t count_) : count(count_), waiting(0), generation(0) {}
+    explicit Barrier(std::size_t count_) : count(count_) {}
 
     /// Blocks until all "count" threads have called Sync()
     void Sync() {
-        std::unique_lock<std::mutex> lk(mutex);
-        const size_t current_generation = generation;
+        std::unique_lock lk{mutex};
+        const std::size_t current_generation = generation;
 
         if (++waiting == count) {
             generation++;
@@ -99,20 +82,19 @@ public:
 private:
     std::condition_variable condvar;
     std::mutex mutex;
-    const size_t count;
-    size_t waiting;
-    size_t generation; // Incremented once each time the barrier is used
+    std::size_t count;
+    std::size_t waiting = 0;
+    std::size_t generation = 0; // Incremented once each time the barrier is used
 };
 
-void SleepCurrentThread(int ms);
-void SwitchCurrentThread(); // On Linux, this is equal to sleep 1ms
+enum class ThreadPriority : u32 {
+    Low = 0,
+    Normal = 1,
+    High = 2,
+    VeryHigh = 3,
+};
 
-// Use this function during a spin-wait to make the current thread
-// relax while another thread is working. This may be more efficient
-// than using events because event functions use kernel calls.
-inline void YieldCPU() {
-    std::this_thread::yield();
-}
+void SetCurrentThreadPriority(ThreadPriority new_priority);
 
 void SetCurrentThreadName(const char* name);
 

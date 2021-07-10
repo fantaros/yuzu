@@ -5,33 +5,46 @@
 #pragma once
 
 #include <cstddef>
+#include <mutex>
 #include <string>
-#include <unordered_map>
 #include <boost/container/flat_map.hpp>
-#include "common/bit_field.h"
 #include "common/common_types.h"
+#include "common/spin_lock.h"
 #include "core/hle/kernel/hle_ipc.h"
-#include "core/hle/kernel/kernel.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Namespace Service
 
+namespace Core {
+class System;
+}
+
 namespace Kernel {
-class ClientPort;
-class ServerPort;
-class ServerSession;
 class HLERequestContext;
+class KClientPort;
+class KServerSession;
+class ServiceThread;
 } // namespace Kernel
 
 namespace Service {
+
+namespace FileSystem {
+class FileSystemController;
+}
+
+namespace NVFlinger {
+class NVFlinger;
+}
 
 namespace SM {
 class ServiceManager;
 }
 
-static const int kMaxPortSize = 8; ///< Maximum size of a port name (8 characters)
-/// Arbitrary default number of maximum connections to an HLE service.
-static const u32 DefaultMaxSessions = 10;
+/// Default number of maximum connections to a server session.
+static constexpr u32 ServerSessionCountMax = 0x40;
+static_assert(ServerSessionCountMax == 0x40,
+              "ServerSessionCountMax isn't 0x40 somehow, this assert is a reminder that this will "
+              "break lots of things");
 
 /**
  * This is an non-templated base of ServiceFramework to reduce code bloat and compilation times, it
@@ -56,19 +69,32 @@ public:
 
     /// Creates a port pair and registers this service with the given ServiceManager.
     void InstallAsService(SM::ServiceManager& service_manager);
-    /// Creates a port pair and registers it on the kernel's global port registry.
-    void InstallAsNamedPort();
-    /// Creates and returns an unregistered port for the service.
-    Kernel::SharedPtr<Kernel::ClientPort> CreatePort();
 
+    /// Invokes a service request routine using the HIPC protocol.
     void InvokeRequest(Kernel::HLERequestContext& ctx);
 
-    ResultCode HandleSyncRequest(Kernel::HLERequestContext& context) override;
+    /// Invokes a service request routine using the HIPC protocol.
+    void InvokeRequestTipc(Kernel::HLERequestContext& ctx);
+
+    /// Creates a port pair and registers it on the kernel's global port registry.
+    Kernel::KClientPort& CreatePort();
+
+    /// Handles a synchronization request for the service.
+    ResultCode HandleSyncRequest(Kernel::KServerSession& session,
+                                 Kernel::HLERequestContext& context) override;
 
 protected:
     /// Member-function pointer type of SyncRequest handlers.
     template <typename Self>
     using HandlerFnP = void (Self::*)(Kernel::HLERequestContext&);
+
+    /// Used to gain exclusive access to the service members, e.g. from CoreTiming thread.
+    [[nodiscard]] std::scoped_lock<Common::SpinLock> LockService() {
+        return std::scoped_lock{lock_service};
+    }
+
+    /// System context that the service operates under.
+    Core::System& system;
 
 private:
     template <typename T>
@@ -83,10 +109,12 @@ private:
     using InvokerFn = void(ServiceFrameworkBase* object, HandlerFnP<ServiceFrameworkBase> member,
                            Kernel::HLERequestContext& ctx);
 
-    ServiceFrameworkBase(const char* service_name, u32 max_sessions, InvokerFn* handler_invoker);
-    ~ServiceFrameworkBase();
+    explicit ServiceFrameworkBase(Core::System& system_, const char* service_name_,
+                                  u32 max_sessions_, InvokerFn* handler_invoker_);
+    ~ServiceFrameworkBase() override;
 
-    void RegisterHandlersBase(const FunctionInfoBase* functions, size_t n);
+    void RegisterHandlersBase(const FunctionInfoBase* functions, std::size_t n);
+    void RegisterHandlersBaseTipc(const FunctionInfoBase* functions, std::size_t n);
     void ReportUnimplementedFunction(Kernel::HLERequestContext& ctx, const FunctionInfoBase* info);
 
     /// Identifier string used to connect to the service.
@@ -94,15 +122,17 @@ private:
     /// Maximum number of concurrent sessions that this service can handle.
     u32 max_sessions;
 
-    /**
-     * Port where incoming connections will be received. Only created when InstallAsService() or
-     * InstallAsNamedPort() are called.
-     */
-    Kernel::SharedPtr<Kernel::ServerPort> port;
+    /// Flag to store if a port was already create/installed to detect multiple install attempts,
+    /// which is not supported.
+    bool port_installed = false;
 
     /// Function used to safely up-cast pointers to the derived class before invoking a handler.
     InvokerFn* handler_invoker;
     boost::container::flat_map<u32, FunctionInfoBase> handlers;
+    boost::container::flat_map<u32, FunctionInfoBase> handlers_tipc;
+
+    /// Used to gain exclusive access to the service members, e.g. from CoreTiming thread.
+    Common::SpinLock lock_service;
 };
 
 /**
@@ -128,29 +158,33 @@ protected:
         /**
          * Constructs a FunctionInfo for a function.
          *
-         * @param expected_header request header in the command buffer which will trigger dispatch
+         * @param expected_header_ request header in the command buffer which will trigger dispatch
          *     to this handler
-         * @param handler_callback member function in this service which will be called to handle
+         * @param handler_callback_ member function in this service which will be called to handle
          *     the request
-         * @param name human-friendly name for the request. Used mostly for logging purposes.
+         * @param name_ human-friendly name for the request. Used mostly for logging purposes.
          */
-        FunctionInfo(u32 expected_header, HandlerFnP<Self> handler_callback, const char* name)
+        FunctionInfo(u32 expected_header_, HandlerFnP<Self> handler_callback_, const char* name_)
             : FunctionInfoBase{
-                  expected_header,
+                  expected_header_,
                   // Type-erase member function pointer by casting it down to the base class.
-                  static_cast<HandlerFnP<ServiceFrameworkBase>>(handler_callback), name} {}
+                  static_cast<HandlerFnP<ServiceFrameworkBase>>(handler_callback_), name_} {}
     };
 
     /**
      * Initializes the handler with no functions installed.
-     * @param max_sessions Maximum number of sessions that can be
-     * connected to this service at the same time.
+     *
+     * @param system_       The system context to construct this service under.
+     * @param service_name_ Name of the service.
+     * @param max_sessions_ Maximum number of sessions that can be
+     *                      connected to this service at the same time.
      */
-    ServiceFramework(const char* service_name, u32 max_sessions = DefaultMaxSessions)
-        : ServiceFrameworkBase(service_name, max_sessions, Invoker) {}
+    explicit ServiceFramework(Core::System& system_, const char* service_name_,
+                              u32 max_sessions_ = ServerSessionCountMax)
+        : ServiceFrameworkBase(system_, service_name_, max_sessions_, Invoker) {}
 
     /// Registers handlers in the service.
-    template <size_t N>
+    template <std::size_t N>
     void RegisterHandlers(const FunctionInfo (&functions)[N]) {
         RegisterHandlers(functions, N);
     }
@@ -159,8 +193,22 @@ protected:
      * Registers handlers in the service. Usually prefer using the other RegisterHandlers
      * overload in order to avoid needing to specify the array size.
      */
-    void RegisterHandlers(const FunctionInfo* functions, size_t n) {
+    void RegisterHandlers(const FunctionInfo* functions, std::size_t n) {
         RegisterHandlersBase(functions, n);
+    }
+
+    /// Registers handlers in the service.
+    template <std::size_t N>
+    void RegisterHandlersTipc(const FunctionInfo (&functions)[N]) {
+        RegisterHandlersTipc(functions, N);
+    }
+
+    /**
+     * Registers handlers in the service. Usually prefer using the other RegisterHandlers
+     * overload in order to avoid needing to specify the array size.
+     */
+    void RegisterHandlersTipc(const FunctionInfo* functions, std::size_t n) {
+        RegisterHandlersBaseTipc(functions, n);
     }
 
 private:
@@ -177,16 +225,17 @@ private:
     }
 };
 
-/// Initialize ServiceManager
-void Init();
+/**
+ * The purpose of this class is to own any objects that need to be shared across the other service
+ * implementations. Will be torn down when the global system instance is shutdown.
+ */
+class Services final {
+public:
+    explicit Services(std::shared_ptr<SM::ServiceManager>& sm, Core::System& system);
+    ~Services();
 
-/// Shutdown ServiceManager
-void Shutdown();
-
-/// Map of named ports managed by the kernel, which can be retrieved using the ConnectToPort SVC.
-extern std::unordered_map<std::string, Kernel::SharedPtr<Kernel::ClientPort>> g_kernel_named_ports;
-
-/// Adds a port to the named port table
-void AddNamedPort(std::string name, Kernel::SharedPtr<Kernel::ClientPort> port);
+private:
+    std::unique_ptr<NVFlinger::NVFlinger> nv_flinger;
+};
 
 } // namespace Service

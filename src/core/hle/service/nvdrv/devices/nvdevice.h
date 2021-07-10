@@ -8,36 +8,68 @@
 #include "common/bit_field.h"
 #include "common/common_types.h"
 #include "common/swap.h"
+#include "core/hle/service/nvdrv/nvdata.h"
+#include "core/hle/service/service.h"
 
-namespace Service {
-namespace Nvidia {
-namespace Devices {
+namespace Core {
+class System;
+}
+
+namespace Service::Nvidia::Devices {
 
 /// Represents an abstract nvidia device node. It is to be subclassed by concrete device nodes to
 /// implement the ioctl interface.
 class nvdevice {
 public:
-    nvdevice() = default;
+    explicit nvdevice(Core::System& system_) : system{system_} {}
     virtual ~nvdevice() = default;
-    union Ioctl {
-        u32_le raw;
-        BitField<0, 8, u32_le> cmd;
-        BitField<8, 8, u32_le> group;
-        BitField<16, 14, u32_le> length;
-        BitField<30, 1, u32_le> is_in;
-        BitField<31, 1, u32_le> is_out;
-    };
 
     /**
-     * Handles an ioctl request.
+     * Handles an ioctl1 request.
      * @param command The ioctl command id.
      * @param input A buffer containing the input data for the ioctl.
      * @param output A buffer where the output data will be written to.
      * @returns The result code of the ioctl.
      */
-    virtual u32 ioctl(Ioctl command, const std::vector<u8>& input, std::vector<u8>& output) = 0;
+    virtual NvResult Ioctl1(DeviceFD fd, Ioctl command, const std::vector<u8>& input,
+                            std::vector<u8>& output) = 0;
+
+    /**
+     * Handles an ioctl2 request.
+     * @param command The ioctl command id.
+     * @param input A buffer containing the input data for the ioctl.
+     * @param inline_input A buffer containing the input data for the ioctl which has been inlined.
+     * @param output A buffer where the output data will be written to.
+     * @returns The result code of the ioctl.
+     */
+    virtual NvResult Ioctl2(DeviceFD fd, Ioctl command, const std::vector<u8>& input,
+                            const std::vector<u8>& inline_input, std::vector<u8>& output) = 0;
+
+    /**
+     * Handles an ioctl3 request.
+     * @param command The ioctl command id.
+     * @param input A buffer containing the input data for the ioctl.
+     * @param output A buffer where the output data will be written to.
+     * @param inline_output A buffer where the inlined output data will be written to.
+     * @returns The result code of the ioctl.
+     */
+    virtual NvResult Ioctl3(DeviceFD fd, Ioctl command, const std::vector<u8>& input,
+                            std::vector<u8>& output, std::vector<u8>& inline_output) = 0;
+
+    /**
+     * Called once a device is openned
+     * @param fd The device fd
+     */
+    virtual void OnOpen(DeviceFD fd) = 0;
+
+    /**
+     * Called once a device is closed
+     * @param fd The device fd
+     */
+    virtual void OnClose(DeviceFD fd) = 0;
+
+protected:
+    Core::System& system;
 };
 
-} // namespace Devices
-} // namespace Nvidia
-} // namespace Service
+} // namespace Service::Nvidia::Devices

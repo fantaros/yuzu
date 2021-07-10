@@ -7,8 +7,11 @@
 #include <string>
 #include "common/common_types.h"
 #include "core/file_sys/program_metadata.h"
-#include "core/hle/kernel/kernel.h"
 #include "core/loader/loader.h"
+
+namespace Core {
+class System;
+}
 
 namespace Loader {
 
@@ -20,29 +23,48 @@ namespace Loader {
  */
 class AppLoader_DeconstructedRomDirectory final : public AppLoader {
 public:
-    AppLoader_DeconstructedRomDirectory(FileUtil::IOFile&& file, std::string filepath);
+    explicit AppLoader_DeconstructedRomDirectory(FileSys::VirtualFile main_file,
+                                                 bool override_update_ = false);
+
+    // Overload to accept exefs directory. Must contain 'main' and 'main.npdm'
+    explicit AppLoader_DeconstructedRomDirectory(FileSys::VirtualDir directory,
+                                                 bool override_update_ = false);
 
     /**
-     * Returns the type of the file
-     * @param file FileUtil::IOFile open file
-     * @param filepath Path of the file that we are opening.
-     * @return FileType found, or FileType::Error if this loader doesn't know it
+     * Identifies whether or not the given file is a deconstructed ROM directory.
+     *
+     * @param dir_file The file to verify.
+     *
+     * @return FileType::DeconstructedRomDirectory, or FileType::Error
+     *         if the file is not a deconstructed ROM directory.
      */
-    static FileType IdentifyType(FileUtil::IOFile& file, const std::string& filepath);
+    static FileType IdentifyType(const FileSys::VirtualFile& dir_file);
 
-    FileType GetFileType() override {
-        return IdentifyType(file, filepath);
+    FileType GetFileType() const override {
+        return IdentifyType(file);
     }
 
-    ResultStatus Load(Kernel::SharedPtr<Kernel::Process>& process) override;
+    LoadResult Load(Kernel::KProcess& process, Core::System& system) override;
 
-    ResultStatus ReadRomFS(std::shared_ptr<FileUtil::IOFile>& romfs_file, u64& offset,
-                           u64& size) override;
+    ResultStatus ReadRomFS(FileSys::VirtualFile& out_dir) override;
+    ResultStatus ReadIcon(std::vector<u8>& out_buffer) override;
+    ResultStatus ReadProgramId(u64& out_program_id) override;
+    ResultStatus ReadTitle(std::string& title) override;
+    bool IsRomFSUpdatable() const override;
+
+    ResultStatus ReadNSOModules(Modules& out_modules) override;
 
 private:
-    std::string filepath_romfs;
-    std::string filepath;
     FileSys::ProgramMetadata metadata;
+    FileSys::VirtualFile romfs;
+    FileSys::VirtualDir dir;
+
+    std::vector<u8> icon_data;
+    std::string name;
+    u64 title_id{};
+    bool override_update;
+
+    Modules modules;
 };
 
 } // namespace Loader

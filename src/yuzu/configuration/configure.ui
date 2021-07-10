@@ -6,45 +6,158 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>461</width>
-    <height>500</height>
+    <width>650</width>
+    <height>650</height>
    </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>0</width>
+    <height>650</height>
+   </size>
   </property>
   <property name="windowTitle">
    <string>yuzu Configuration</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <item>
-    <widget class="QTabWidget" name="tabWidget">
-     <property name="currentIndex">
-      <number>0</number>
-     </property>
-     <widget class="ConfigureGeneral" name="generalTab">
-      <attribute name="title">
-       <string>General</string>
-      </attribute>
-     </widget>
-     <widget class="ConfigureSystem" name="systemTab">
-      <attribute name="title">
-       <string>System</string>
-      </attribute>
-     </widget>
-     <widget class="ConfigureInput" name="inputTab">
-      <attribute name="title">
-       <string>Input</string>
-      </attribute>
-     </widget>
-      <widget class="ConfigureGraphics" name="graphicsTab">
-        <attribute name="title">
-          <string>Graphics</string>
-        </attribute>
+    <layout class="QHBoxLayout" name="horizontalLayout">
+     <item>
+      <widget class="QListWidget" name="selectorList">
+       <property name="minimumSize">
+        <size>
+         <width>120</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="maximumSize">
+        <size>
+         <width>120</width>
+         <height>16777215</height>
+        </size>
+       </property>
       </widget>
-     <widget class="ConfigureDebug" name="debugTab">
-      <attribute name="title">
-       <string>Debug</string>
-      </attribute>
-     </widget>
-    </widget>
+     </item>
+     <item>
+      <widget class="QTabWidget" name="tabWidget">
+       <property name="currentIndex">
+        <number>11</number>
+       </property>
+       <widget class="ConfigureGeneral" name="generalTab">
+        <property name="accessibleName">
+         <string>General</string>
+        </property>
+        <attribute name="title">
+         <string>General</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureUi" name="uiTab">
+        <property name="accessibleName">
+         <string>UI</string>
+        </property>
+        <attribute name="title">
+         <string>Game List</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureSystem" name="systemTab">
+        <property name="accessibleName">
+         <string>System</string>
+        </property>
+        <attribute name="title">
+         <string>System</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureProfileManager" name="profileManagerTab">
+        <property name="accessibleName">
+         <string>Profiles</string>
+        </property>
+        <attribute name="title">
+         <string>Profiles</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureFilesystem" name="filesystemTab">
+        <property name="accessibleName">
+         <string>Filesystem</string>
+        </property>
+        <attribute name="title">
+         <string>Filesystem</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureInput" name="inputTab">
+        <property name="accessibleName">
+         <string>Controls</string>
+        </property>
+        <attribute name="title">
+         <string>Controls</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureHotkeys" name="hotkeysTab">
+        <property name="accessibleName">
+         <string>Hotkeys</string>
+        </property>
+        <attribute name="title">
+         <string>Hotkeys</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureCpu" name="cpuTab">
+        <property name="accessibleName">
+         <string>CPU</string>
+        </property>
+        <attribute name="title">
+         <string>CPU</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureGraphics" name="graphicsTab">
+        <property name="accessibleName">
+         <string>Graphics</string>
+        </property>
+        <attribute name="title">
+         <string>Graphics</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureGraphicsAdvanced" name="graphicsAdvancedTab">
+        <property name="accessibleName">
+         <string>Advanced</string>
+        </property>
+        <attribute name="title">
+         <string>GraphicsAdvanced</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureAudio" name="audioTab">
+        <property name="accessibleName">
+         <string>Audio</string>
+        </property>
+        <attribute name="title">
+         <string>Audio</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureDebugTab" name="debugTab">
+        <property name="accessibleName">
+         <string>Debug</string>
+        </property>
+        <attribute name="title">
+         <string>Debug</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureWeb" name="webTab">
+        <property name="accessibleName">
+         <string>Web</string>
+        </property>
+        <attribute name="title">
+         <string>Web</string>
+        </attribute>
+       </widget>
+       <widget class="ConfigureService" name="serviceTab">
+        <property name="accessibleName">
+         <string>Services</string>
+        </property>
+        <attribute name="title">
+         <string>Services</string>
+        </attribute>
+       </widget>
+      </widget>
+     </item>
+    </layout>
    </item>
    <item>
     <widget class="QDialogButtonBox" name="buttonBox">
@@ -69,9 +182,51 @@
    <container>1</container>
   </customwidget>
   <customwidget>
-   <class>ConfigureDebug</class>
+   <class>ConfigureProfileManager</class>
    <extends>QWidget</extends>
-   <header>configuration/configure_debug.h</header>
+   <header>configuration/configure_profile_manager.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ConfigureFilesystem</class>
+   <extends>QWidget</extends>
+   <header>configuration/configure_filesystem.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ConfigureAudio</class>
+   <extends>QWidget</extends>
+   <header>configuration/configure_audio.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ConfigureCpu</class>
+   <extends>QWidget</extends>
+   <header>configuration/configure_cpu.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ConfigureGraphics</class>
+   <extends>QWidget</extends>
+   <header>configuration/configure_graphics.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ConfigureGraphicsAdvanced</class>
+   <extends>QWidget</extends>
+   <header>configuration/configure_graphics_advanced.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ConfigureWeb</class>
+   <extends>QWidget</extends>
+   <header>configuration/configure_web.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ConfigureUi</class>
+   <extends>QWidget</extends>
+   <header>configuration/configure_ui.h</header>
    <container>1</container>
   </customwidget>
   <customwidget>
@@ -81,9 +236,21 @@
    <container>1</container>
   </customwidget>
   <customwidget>
-   <class>ConfigureGraphics</class>
+   <class>ConfigureHotkeys</class>
    <extends>QWidget</extends>
-   <header>configuration/configure_graphics.h</header>
+   <header>configuration/configure_hotkeys.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ConfigureService</class>
+   <extends>QWidget</extends>
+   <header>configuration/configure_service.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ConfigureDebugTab</class>
+   <extends>QWidget</extends>
+   <header>configuration/configure_debug_tab.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>
@@ -96,12 +263,12 @@
    <slot>accept()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>220</x>
-     <y>380</y>
+     <x>20</x>
+     <y>20</y>
     </hint>
     <hint type="destinationlabel">
-     <x>220</x>
-     <y>200</y>
+     <x>20</x>
+     <y>20</y>
     </hint>
    </hints>
   </connection>
@@ -112,12 +279,12 @@
    <slot>reject()</slot>
    <hints>
     <hint type="sourcelabel">
-     <x>220</x>
-     <y>380</y>
+     <x>20</x>
+     <y>20</y>
     </hint>
     <hint type="destinationlabel">
-     <x>220</x>
-     <y>200</y>
+     <x>20</x>
+     <y>20</y>
     </hint>
    </hints>
   </connection>

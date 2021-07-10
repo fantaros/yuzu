@@ -6,18 +6,16 @@
 
 #include "core/hle/service/service.h"
 
-namespace Kernel {
-class HLERequestContext;
+namespace Core {
+class System;
 }
 
-namespace Service {
-namespace Audio {
+namespace Service::Audio {
 
 class CodecCtl final : public ServiceFramework<CodecCtl> {
 public:
-    explicit CodecCtl();
-    ~CodecCtl() = default;
+    explicit CodecCtl(Core::System& system_);
+    ~CodecCtl() override;
 };
 
-} // namespace Audio
-} // namespace Service
+} // namespace Service::Audio

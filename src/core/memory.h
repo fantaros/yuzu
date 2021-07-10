@@ -4,243 +4,538 @@
 
 #pragma once
 
-#include <array>
 #include <cstddef>
-#include <map>
+#include <memory>
 #include <string>
-#include <tuple>
-#include <vector>
-#include <boost/icl/interval_map.hpp>
-#include <boost/optional.hpp>
 #include "common/common_types.h"
-#include "core/memory_hook.h"
 
-namespace Kernel {
-class Process;
+namespace Common {
+struct PageTable;
 }
 
-namespace Memory {
+namespace Core {
+class System;
+}
+
+namespace Kernel {
+class PhysicalMemory;
+class KProcess;
+} // namespace Kernel
+
+namespace Core::Memory {
 
 /**
  * Page size used by the ARM architecture. This is the smallest granularity with which memory can
  * be mapped.
  */
-constexpr size_t PAGE_BITS = 12;
-constexpr u64 PAGE_SIZE = 1 << PAGE_BITS;
+constexpr std::size_t PAGE_BITS = 12;
+constexpr u64 PAGE_SIZE = 1ULL << PAGE_BITS;
 constexpr u64 PAGE_MASK = PAGE_SIZE - 1;
-constexpr size_t ADDRESS_SPACE_BITS = 36;
-constexpr size_t PAGE_TABLE_NUM_ENTRIES = 1ULL << (ADDRESS_SPACE_BITS - PAGE_BITS);
-
-enum class PageType : u8 {
-    /// Page is unmapped and should cause an access error.
-    Unmapped,
-    /// Page is mapped to regular memory. This is the only type you can get pointers to.
-    Memory,
-    /// Page is mapped to a memory hook, which intercepts read and write requests.
-    Special,
-};
-
-struct SpecialRegion {
-    enum class Type {
-        DebugHook,
-        IODevice,
-    } type;
-
-    MemoryHookPointer handler;
-
-    bool operator<(const SpecialRegion& other) const {
-        return std::tie(type, handler) < std::tie(other.type, other.handler);
-    }
-
-    bool operator==(const SpecialRegion& other) const {
-        return std::tie(type, handler) == std::tie(other.type, other.handler);
-    }
-};
-
-/**
- * A (reasonably) fast way of allowing switchable and remappable process address spaces. It loosely
- * mimics the way a real CPU page table works.
- */
-struct PageTable {
-    /**
-     * Array of memory pointers backing each page. An entry can only be non-null if the
-     * corresponding entry in the `attributes` array is of type `Memory`.
-     */
-    std::array<u8*, PAGE_TABLE_NUM_ENTRIES> pointers;
-
-    /**
-     * Contains MMIO handlers that back memory regions whose entries in the `attribute` array is of
-     * type `Special`.
-     */
-    boost::icl::interval_map<VAddr, std::set<SpecialRegion>> special_regions;
-
-    /**
-     * Array of fine grained page attributes. If it is set to any value other than `Memory`, then
-     * the corresponding entry in `pointers` MUST be set to null.
-     */
-    std::array<PageType, PAGE_TABLE_NUM_ENTRIES> attributes;
-};
-
-/// Physical memory regions as seen from the ARM11
-enum : PAddr {
-    /// IO register area
-    IO_AREA_PADDR = 0x10100000,
-    IO_AREA_SIZE = 0x01000000, ///< IO area size (16MB)
-    IO_AREA_PADDR_END = IO_AREA_PADDR + IO_AREA_SIZE,
-
-    /// MPCore internal memory region
-    MPCORE_RAM_PADDR = 0x17E00000,
-    MPCORE_RAM_SIZE = 0x00002000, ///< MPCore internal memory size (8KB)
-    MPCORE_RAM_PADDR_END = MPCORE_RAM_PADDR + MPCORE_RAM_SIZE,
-
-    /// Video memory
-    VRAM_PADDR = 0x18000000,
-    VRAM_SIZE = 0x00600000, ///< VRAM size (6MB)
-    VRAM_PADDR_END = VRAM_PADDR + VRAM_SIZE,
-
-    /// New 3DS additional memory. Supposedly faster than regular FCRAM. Part of it can be used by
-    /// applications and system modules if mapped via the ExHeader.
-    N3DS_EXTRA_RAM_PADDR = 0x1F000000,
-    N3DS_EXTRA_RAM_SIZE = 0x00400000, ///< New 3DS additional memory size (4MB)
-    N3DS_EXTRA_RAM_PADDR_END = N3DS_EXTRA_RAM_PADDR + N3DS_EXTRA_RAM_SIZE,
-
-    /// DSP memory
-    DSP_RAM_PADDR = 0x1FF00000,
-    DSP_RAM_SIZE = 0x00080000, ///< DSP memory size (512KB)
-    DSP_RAM_PADDR_END = DSP_RAM_PADDR + DSP_RAM_SIZE,
-
-    /// AXI WRAM
-    AXI_WRAM_PADDR = 0x1FF80000,
-    AXI_WRAM_SIZE = 0x00080000, ///< AXI WRAM size (512KB)
-    AXI_WRAM_PADDR_END = AXI_WRAM_PADDR + AXI_WRAM_SIZE,
-
-    /// Main FCRAM
-    FCRAM_PADDR = 0x20000000,
-    FCRAM_SIZE = 0x08000000,      ///< FCRAM size on the Old 3DS (128MB)
-    FCRAM_N3DS_SIZE = 0x10000000, ///< FCRAM size on the New 3DS (256MB)
-    FCRAM_PADDR_END = FCRAM_PADDR + FCRAM_SIZE,
-    FCRAM_N3DS_PADDR_END = FCRAM_PADDR + FCRAM_N3DS_SIZE,
-};
 
 /// Virtual user-space memory regions
 enum : VAddr {
-    /// Where the application text, data and bss reside.
-    PROCESS_IMAGE_VADDR = 0x08000000,
-    PROCESS_IMAGE_MAX_SIZE = 0x08000000,
-    PROCESS_IMAGE_VADDR_END = PROCESS_IMAGE_VADDR + PROCESS_IMAGE_MAX_SIZE,
-
-    /// Area where IPC buffers are mapped onto.
-    IPC_MAPPING_VADDR = 0x04000000,
-    IPC_MAPPING_SIZE = 0x04000000,
-    IPC_MAPPING_VADDR_END = IPC_MAPPING_VADDR + IPC_MAPPING_SIZE,
-
-    /// Application heap (includes stack).
-    HEAP_VADDR = 0x108000000,
-    HEAP_SIZE = 0xF0000000,
-    HEAP_VADDR_END = HEAP_VADDR + HEAP_SIZE,
-
-    /// Area where shared memory buffers are mapped onto.
-    SHARED_MEMORY_VADDR = 0x10000000,
-    SHARED_MEMORY_SIZE = 0x04000000,
-    SHARED_MEMORY_VADDR_END = SHARED_MEMORY_VADDR + SHARED_MEMORY_SIZE,
-
-    /// Maps 1:1 to an offset in FCRAM. Used for HW allocations that need to be linear in physical
-    /// memory.
-    LINEAR_HEAP_VADDR = 0x14000000,
-    LINEAR_HEAP_SIZE = 0x08000000,
-    LINEAR_HEAP_VADDR_END = LINEAR_HEAP_VADDR + LINEAR_HEAP_SIZE,
-
-    /// Maps 1:1 to New 3DS additional memory
-    N3DS_EXTRA_RAM_VADDR = 0x1E800000,
-    N3DS_EXTRA_RAM_VADDR_END = N3DS_EXTRA_RAM_VADDR + N3DS_EXTRA_RAM_SIZE,
-
-    /// Maps 1:1 to the IO register area.
-    IO_AREA_VADDR = 0x1EC00000,
-    IO_AREA_VADDR_END = IO_AREA_VADDR + IO_AREA_SIZE,
-
-    /// Maps 1:1 to VRAM.
-    VRAM_VADDR = 0x1F000000,
-    VRAM_VADDR_END = VRAM_VADDR + VRAM_SIZE,
-
-    /// Maps 1:1 to DSP memory.
-    DSP_RAM_VADDR = 0x1FF00000,
-    DSP_RAM_VADDR_END = DSP_RAM_VADDR + DSP_RAM_SIZE,
-
-    /// Read-only page containing kernel and system configuration values.
-    CONFIG_MEMORY_VADDR = 0x1FF80000,
-    CONFIG_MEMORY_SIZE = 0x00001000,
-    CONFIG_MEMORY_VADDR_END = CONFIG_MEMORY_VADDR + CONFIG_MEMORY_SIZE,
-
-    /// Usually read-only page containing mostly values read from hardware.
-    SHARED_PAGE_VADDR = 0x1FF81000,
-    SHARED_PAGE_SIZE = 0x00001000,
-    SHARED_PAGE_VADDR_END = SHARED_PAGE_VADDR + SHARED_PAGE_SIZE,
-
-    /// Area where TLS (Thread-Local Storage) buffers are allocated.
-    TLS_AREA_VADDR = 0x228000000,
+    /// TLS (Thread-Local Storage) related.
     TLS_ENTRY_SIZE = 0x200,
 
-    /// Equivalent to LINEAR_HEAP_VADDR, but expanded to cover the extra memory in the New 3DS.
-    NEW_LINEAR_HEAP_VADDR = 0x30000000,
-    NEW_LINEAR_HEAP_SIZE = 0x10000000,
-    NEW_LINEAR_HEAP_VADDR_END = NEW_LINEAR_HEAP_VADDR + NEW_LINEAR_HEAP_SIZE,
+    /// Application stack
+    DEFAULT_STACK_SIZE = 0x100000,
+
+    /// Kernel Virtual Address Range
+    KERNEL_REGION_VADDR = 0xFFFFFF8000000000,
+    KERNEL_REGION_SIZE = 0x7FFFE00000,
+    KERNEL_REGION_END = KERNEL_REGION_VADDR + KERNEL_REGION_SIZE,
 };
 
-/// Currently active page table
-void SetCurrentPageTable(PageTable* page_table);
-PageTable* GetCurrentPageTable();
+/// Central class that handles all memory operations and state.
+class Memory {
+public:
+    explicit Memory(Core::System& system);
+    ~Memory();
 
-/// Determines if the given VAddr is valid for the specified process.
-bool IsValidVirtualAddress(const Kernel::Process& process, const VAddr vaddr);
-bool IsValidVirtualAddress(const VAddr addr);
+    Memory(const Memory&) = delete;
+    Memory& operator=(const Memory&) = delete;
 
-bool IsValidPhysicalAddress(const PAddr addr);
+    Memory(Memory&&) = default;
+    Memory& operator=(Memory&&) = default;
 
-u8 Read8(VAddr addr);
-u16 Read16(VAddr addr);
-u32 Read32(VAddr addr);
-u64 Read64(VAddr addr);
+    /**
+     * Resets the state of the Memory system.
+     */
+    void Reset();
 
-void Write8(VAddr addr, u8 data);
-void Write16(VAddr addr, u16 data);
-void Write32(VAddr addr, u32 data);
-void Write64(VAddr addr, u64 data);
+    /**
+     * Changes the currently active page table to that of the given process instance.
+     *
+     * @param process The process to use the page table of.
+     */
+    void SetCurrentPageTable(Kernel::KProcess& process, u32 core_id);
 
-void ReadBlock(const Kernel::Process& process, const VAddr src_addr, void* dest_buffer,
-               size_t size);
-void ReadBlock(const VAddr src_addr, void* dest_buffer, size_t size);
-void WriteBlock(const Kernel::Process& process, const VAddr dest_addr, const void* src_buffer,
-                size_t size);
-void WriteBlock(const VAddr dest_addr, const void* src_buffer, size_t size);
-void ZeroBlock(const VAddr dest_addr, const size_t size);
-void CopyBlock(VAddr dest_addr, VAddr src_addr, size_t size);
+    /**
+     * Maps an allocated buffer onto a region of the emulated process address space.
+     *
+     * @param page_table The page table of the emulated process.
+     * @param base       The address to start mapping at. Must be page-aligned.
+     * @param size       The amount of bytes to map. Must be page-aligned.
+     * @param target     Buffer with the memory backing the mapping. Must be of length at least
+     *                   `size`.
+     */
+    void MapMemoryRegion(Common::PageTable& page_table, VAddr base, u64 size, PAddr target);
 
-u8* GetPointer(VAddr virtual_address);
+    /**
+     * Unmaps a region of the emulated process address space.
+     *
+     * @param page_table The page table of the emulated process.
+     * @param base       The address to begin unmapping at.
+     * @param size       The amount of bytes to unmap.
+     */
+    void UnmapRegion(Common::PageTable& page_table, VAddr base, u64 size);
 
-std::string ReadCString(VAddr virtual_address, std::size_t max_length);
+    /**
+     * Checks whether or not the supplied address is a valid virtual
+     * address for the given process.
+     *
+     * @param process The emulated process to check the address against.
+     * @param vaddr   The virtual address to check the validity of.
+     *
+     * @returns True if the given virtual address is valid, false otherwise.
+     */
+    bool IsValidVirtualAddress(const Kernel::KProcess& process, VAddr vaddr) const;
 
-/**
- * Converts a virtual address inside a region with 1:1 mapping to physical memory to a physical
- * address. This should be used by services to translate addresses for use by the hardware.
- */
-boost::optional<PAddr> TryVirtualToPhysicalAddress(VAddr addr);
+    /**
+     * Checks whether or not the supplied address is a valid virtual
+     * address for the current process.
+     *
+     * @param vaddr The virtual address to check the validity of.
+     *
+     * @returns True if the given virtual address is valid, false otherwise.
+     */
+    bool IsValidVirtualAddress(VAddr vaddr) const;
 
-/**
- * Converts a virtual address inside a region with 1:1 mapping to physical memory to a physical
- * address. This should be used by services to translate addresses for use by the hardware.
- *
- * @deprecated Use TryVirtualToPhysicalAddress(), which reports failure.
- */
-PAddr VirtualToPhysicalAddress(VAddr addr);
+    /**
+     * Gets a pointer to the given address.
+     *
+     * @param vaddr Virtual address to retrieve a pointer to.
+     *
+     * @returns The pointer to the given address, if the address is valid.
+     *          If the address is not valid, nullptr will be returned.
+     */
+    u8* GetPointer(VAddr vaddr);
 
-/**
- * Undoes a mapping performed by VirtualToPhysicalAddress().
- */
-boost::optional<VAddr> PhysicalToVirtualAddress(PAddr addr);
+    template <typename T>
+    T* GetPointer(VAddr vaddr) {
+        return reinterpret_cast<T*>(GetPointer(vaddr));
+    }
 
-/**
- * Gets a pointer to the memory region beginning at the specified physical address.
- */
-u8* GetPhysicalPointer(PAddr address);
+    /**
+     * Gets a pointer to the given address.
+     *
+     * @param vaddr Virtual address to retrieve a pointer to.
+     *
+     * @returns The pointer to the given address, if the address is valid.
+     *          If the address is not valid, nullptr will be returned.
+     */
+    const u8* GetPointer(VAddr vaddr) const;
 
-} // namespace Memory
+    template <typename T>
+    const T* GetPointer(VAddr vaddr) const {
+        return reinterpret_cast<T*>(GetPointer(vaddr));
+    }
+
+    /**
+     * Reads an 8-bit unsigned value from the current process' address space
+     * at the given virtual address.
+     *
+     * @param addr The virtual address to read the 8-bit value from.
+     *
+     * @returns the read 8-bit unsigned value.
+     */
+    u8 Read8(VAddr addr);
+
+    /**
+     * Reads a 16-bit unsigned value from the current process' address space
+     * at the given virtual address.
+     *
+     * @param addr The virtual address to read the 16-bit value from.
+     *
+     * @returns the read 16-bit unsigned value.
+     */
+    u16 Read16(VAddr addr);
+
+    /**
+     * Reads a 32-bit unsigned value from the current process' address space
+     * at the given virtual address.
+     *
+     * @param addr The virtual address to read the 32-bit value from.
+     *
+     * @returns the read 32-bit unsigned value.
+     */
+    u32 Read32(VAddr addr);
+
+    /**
+     * Reads a 64-bit unsigned value from the current process' address space
+     * at the given virtual address.
+     *
+     * @param addr The virtual address to read the 64-bit value from.
+     *
+     * @returns the read 64-bit value.
+     */
+    u64 Read64(VAddr addr);
+
+    /**
+     * Writes an 8-bit unsigned integer to the given virtual address in
+     * the current process' address space.
+     *
+     * @param addr The virtual address to write the 8-bit unsigned integer to.
+     * @param data The 8-bit unsigned integer to write to the given virtual address.
+     *
+     * @post The memory at the given virtual address contains the specified data value.
+     */
+    void Write8(VAddr addr, u8 data);
+
+    /**
+     * Writes a 16-bit unsigned integer to the given virtual address in
+     * the current process' address space.
+     *
+     * @param addr The virtual address to write the 16-bit unsigned integer to.
+     * @param data The 16-bit unsigned integer to write to the given virtual address.
+     *
+     * @post The memory range [addr, sizeof(data)) contains the given data value.
+     */
+    void Write16(VAddr addr, u16 data);
+
+    /**
+     * Writes a 32-bit unsigned integer to the given virtual address in
+     * the current process' address space.
+     *
+     * @param addr The virtual address to write the 32-bit unsigned integer to.
+     * @param data The 32-bit unsigned integer to write to the given virtual address.
+     *
+     * @post The memory range [addr, sizeof(data)) contains the given data value.
+     */
+    void Write32(VAddr addr, u32 data);
+
+    /**
+     * Writes a 64-bit unsigned integer to the given virtual address in
+     * the current process' address space.
+     *
+     * @param addr The virtual address to write the 64-bit unsigned integer to.
+     * @param data The 64-bit unsigned integer to write to the given virtual address.
+     *
+     * @post The memory range [addr, sizeof(data)) contains the given data value.
+     */
+    void Write64(VAddr addr, u64 data);
+
+    /**
+     * Writes a 8-bit unsigned integer to the given virtual address in
+     * the current process' address space if and only if the address contains
+     * the expected value. This operation is atomic.
+     *
+     * @param addr The virtual address to write the 8-bit unsigned integer to.
+     * @param data The 8-bit unsigned integer to write to the given virtual address.
+     * @param expected The 8-bit unsigned integer to check against the given virtual address.
+     *
+     * @post The memory range [addr, sizeof(data)) contains the given data value.
+     */
+    bool WriteExclusive8(VAddr addr, u8 data, u8 expected);
+
+    /**
+     * Writes a 16-bit unsigned integer to the given virtual address in
+     * the current process' address space if and only if the address contains
+     * the expected value. This operation is atomic.
+     *
+     * @param addr The virtual address to write the 16-bit unsigned integer to.
+     * @param data The 16-bit unsigned integer to write to the given virtual address.
+     * @param expected The 16-bit unsigned integer to check against the given virtual address.
+     *
+     * @post The memory range [addr, sizeof(data)) contains the given data value.
+     */
+    bool WriteExclusive16(VAddr addr, u16 data, u16 expected);
+
+    /**
+     * Writes a 32-bit unsigned integer to the given virtual address in
+     * the current process' address space if and only if the address contains
+     * the expected value. This operation is atomic.
+     *
+     * @param addr The virtual address to write the 32-bit unsigned integer to.
+     * @param data The 32-bit unsigned integer to write to the given virtual address.
+     * @param expected The 32-bit unsigned integer to check against the given virtual address.
+     *
+     * @post The memory range [addr, sizeof(data)) contains the given data value.
+     */
+    bool WriteExclusive32(VAddr addr, u32 data, u32 expected);
+
+    /**
+     * Writes a 64-bit unsigned integer to the given virtual address in
+     * the current process' address space if and only if the address contains
+     * the expected value. This operation is atomic.
+     *
+     * @param addr The virtual address to write the 64-bit unsigned integer to.
+     * @param data The 64-bit unsigned integer to write to the given virtual address.
+     * @param expected The 64-bit unsigned integer to check against the given virtual address.
+     *
+     * @post The memory range [addr, sizeof(data)) contains the given data value.
+     */
+    bool WriteExclusive64(VAddr addr, u64 data, u64 expected);
+
+    /**
+     * Writes a 128-bit unsigned integer to the given virtual address in
+     * the current process' address space if and only if the address contains
+     * the expected value. This operation is atomic.
+     *
+     * @param addr The virtual address to write the 128-bit unsigned integer to.
+     * @param data The 128-bit unsigned integer to write to the given virtual address.
+     * @param expected The 128-bit unsigned integer to check against the given virtual address.
+     *
+     * @post The memory range [addr, sizeof(data)) contains the given data value.
+     */
+    bool WriteExclusive128(VAddr addr, u128 data, u128 expected);
+
+    /**
+     * Reads a null-terminated string from the given virtual address.
+     * This function will continually read characters until either:
+     *
+     * - A null character ('\0') is reached.
+     * - max_length characters have been read.
+     *
+     * @note The final null-terminating character (if found) is not included
+     *       in the returned string.
+     *
+     * @param vaddr      The address to begin reading the string from.
+     * @param max_length The maximum length of the string to read in characters.
+     *
+     * @returns The read string.
+     */
+    std::string ReadCString(VAddr vaddr, std::size_t max_length);
+
+    /**
+     * Reads a contiguous block of bytes from a specified process' address space.
+     *
+     * @param process     The process to read the data from.
+     * @param src_addr    The virtual address to begin reading from.
+     * @param dest_buffer The buffer to place the read bytes into.
+     * @param size        The amount of data to read, in bytes.
+     *
+     * @note If a size of 0 is specified, then this function reads nothing and
+     *       no attempts to access memory are made at all.
+     *
+     * @pre dest_buffer must be at least size bytes in length, otherwise a
+     *      buffer overrun will occur.
+     *
+     * @post The range [dest_buffer, size) contains the read bytes from the
+     *       process' address space.
+     */
+    void ReadBlock(const Kernel::KProcess& process, VAddr src_addr, void* dest_buffer,
+                   std::size_t size);
+
+    /**
+     * Reads a contiguous block of bytes from a specified process' address space.
+     * This unsafe version does not trigger GPU flushing.
+     *
+     * @param process     The process to read the data from.
+     * @param src_addr    The virtual address to begin reading from.
+     * @param dest_buffer The buffer to place the read bytes into.
+     * @param size        The amount of data to read, in bytes.
+     *
+     * @note If a size of 0 is specified, then this function reads nothing and
+     *       no attempts to access memory are made at all.
+     *
+     * @pre dest_buffer must be at least size bytes in length, otherwise a
+     *      buffer overrun will occur.
+     *
+     * @post The range [dest_buffer, size) contains the read bytes from the
+     *       process' address space.
+     */
+    void ReadBlockUnsafe(const Kernel::KProcess& process, VAddr src_addr, void* dest_buffer,
+                         std::size_t size);
+
+    /**
+     * Reads a contiguous block of bytes from the current process' address space.
+     *
+     * @param src_addr    The virtual address to begin reading from.
+     * @param dest_buffer The buffer to place the read bytes into.
+     * @param size        The amount of data to read, in bytes.
+     *
+     * @note If a size of 0 is specified, then this function reads nothing and
+     *       no attempts to access memory are made at all.
+     *
+     * @pre dest_buffer must be at least size bytes in length, otherwise a
+     *      buffer overrun will occur.
+     *
+     * @post The range [dest_buffer, size) contains the read bytes from the
+     *       current process' address space.
+     */
+    void ReadBlock(VAddr src_addr, void* dest_buffer, std::size_t size);
+
+    /**
+     * Reads a contiguous block of bytes from the current process' address space.
+     * This unsafe version does not trigger GPU flushing.
+     *
+     * @param src_addr    The virtual address to begin reading from.
+     * @param dest_buffer The buffer to place the read bytes into.
+     * @param size        The amount of data to read, in bytes.
+     *
+     * @note If a size of 0 is specified, then this function reads nothing and
+     *       no attempts to access memory are made at all.
+     *
+     * @pre dest_buffer must be at least size bytes in length, otherwise a
+     *      buffer overrun will occur.
+     *
+     * @post The range [dest_buffer, size) contains the read bytes from the
+     *       current process' address space.
+     */
+    void ReadBlockUnsafe(VAddr src_addr, void* dest_buffer, std::size_t size);
+
+    /**
+     * Writes a range of bytes into a given process' address space at the specified
+     * virtual address.
+     *
+     * @param process    The process to write data into the address space of.
+     * @param dest_addr  The destination virtual address to begin writing the data at.
+     * @param src_buffer The data to write into the process' address space.
+     * @param size       The size of the data to write, in bytes.
+     *
+     * @post The address range [dest_addr, size) in the process' address space
+     *       contains the data that was within src_buffer.
+     *
+     * @post If an attempt is made to write into an unmapped region of memory, the writes
+     *       will be ignored and an error will be logged.
+     *
+     * @post If a write is performed into a region of memory that is considered cached
+     *       rasterizer memory, will cause the currently active rasterizer to be notified
+     *       and will mark that region as invalidated to caches that the active
+     *       graphics backend may be maintaining over the course of execution.
+     */
+    void WriteBlock(const Kernel::KProcess& process, VAddr dest_addr, const void* src_buffer,
+                    std::size_t size);
+
+    /**
+     * Writes a range of bytes into a given process' address space at the specified
+     * virtual address.
+     * This unsafe version does not invalidate GPU Memory.
+     *
+     * @param process    The process to write data into the address space of.
+     * @param dest_addr  The destination virtual address to begin writing the data at.
+     * @param src_buffer The data to write into the process' address space.
+     * @param size       The size of the data to write, in bytes.
+     *
+     * @post The address range [dest_addr, size) in the process' address space
+     *       contains the data that was within src_buffer.
+     *
+     * @post If an attempt is made to write into an unmapped region of memory, the writes
+     *       will be ignored and an error will be logged.
+     *
+     */
+    void WriteBlockUnsafe(const Kernel::KProcess& process, VAddr dest_addr, const void* src_buffer,
+                          std::size_t size);
+
+    /**
+     * Writes a range of bytes into the current process' address space at the specified
+     * virtual address.
+     *
+     * @param dest_addr  The destination virtual address to begin writing the data at.
+     * @param src_buffer The data to write into the current process' address space.
+     * @param size       The size of the data to write, in bytes.
+     *
+     * @post The address range [dest_addr, size) in the current process' address space
+     *       contains the data that was within src_buffer.
+     *
+     * @post If an attempt is made to write into an unmapped region of memory, the writes
+     *       will be ignored and an error will be logged.
+     *
+     * @post If a write is performed into a region of memory that is considered cached
+     *       rasterizer memory, will cause the currently active rasterizer to be notified
+     *       and will mark that region as invalidated to caches that the active
+     *       graphics backend may be maintaining over the course of execution.
+     */
+    void WriteBlock(VAddr dest_addr, const void* src_buffer, std::size_t size);
+
+    /**
+     * Writes a range of bytes into the current process' address space at the specified
+     * virtual address.
+     * This unsafe version does not invalidate GPU Memory.
+     *
+     * @param dest_addr  The destination virtual address to begin writing the data at.
+     * @param src_buffer The data to write into the current process' address space.
+     * @param size       The size of the data to write, in bytes.
+     *
+     * @post The address range [dest_addr, size) in the current process' address space
+     *       contains the data that was within src_buffer.
+     *
+     * @post If an attempt is made to write into an unmapped region of memory, the writes
+     *       will be ignored and an error will be logged.
+     *
+     */
+    void WriteBlockUnsafe(VAddr dest_addr, const void* src_buffer, std::size_t size);
+
+    /**
+     * Fills the specified address range within a process' address space with zeroes.
+     *
+     * @param process   The process that will have a portion of its memory zeroed out.
+     * @param dest_addr The starting virtual address of the range to zero out.
+     * @param size      The size of the address range to zero out, in bytes.
+     *
+     * @post The range [dest_addr, size) within the process' address space is
+     *       filled with zeroes.
+     */
+    void ZeroBlock(const Kernel::KProcess& process, VAddr dest_addr, std::size_t size);
+
+    /**
+     * Fills the specified address range within the current process' address space with zeroes.
+     *
+     * @param dest_addr The starting virtual address of the range to zero out.
+     * @param size      The size of the address range to zero out, in bytes.
+     *
+     * @post The range [dest_addr, size) within the current process' address space is
+     *       filled with zeroes.
+     */
+    void ZeroBlock(VAddr dest_addr, std::size_t size);
+
+    /**
+     * Copies data within a process' address space to another location within the
+     * same address space.
+     *
+     * @param process   The process that will have data copied within its address space.
+     * @param dest_addr The destination virtual address to begin copying the data into.
+     * @param src_addr  The source virtual address to begin copying the data from.
+     * @param size      The size of the data to copy, in bytes.
+     *
+     * @post The range [dest_addr, size) within the process' address space contains the
+     *       same data within the range [src_addr, size).
+     */
+    void CopyBlock(const Kernel::KProcess& process, VAddr dest_addr, VAddr src_addr,
+                   std::size_t size);
+
+    /**
+     * Copies data within the current process' address space to another location within the
+     * same address space.
+     *
+     * @param dest_addr The destination virtual address to begin copying the data into.
+     * @param src_addr  The source virtual address to begin copying the data from.
+     * @param size      The size of the data to copy, in bytes.
+     *
+     * @post The range [dest_addr, size) within the current process' address space
+     *       contains the same data within the range [src_addr, size).
+     */
+    void CopyBlock(VAddr dest_addr, VAddr src_addr, std::size_t size);
+
+    /**
+     * Marks each page within the specified address range as cached or uncached.
+     *
+     * @param vaddr  The virtual address indicating the start of the address range.
+     * @param size   The size of the address range in bytes.
+     * @param cached Whether or not any pages within the address range should be
+     *               marked as cached or uncached.
+     */
+    void RasterizerMarkRegionCached(VAddr vaddr, u64 size, bool cached);
+
+private:
+    Core::System& system;
+
+    struct Impl;
+    std::unique_ptr<Impl> impl;
+};
+
+/// Determines if the given VAddr is a kernel address
+bool IsKernelVirtualAddress(VAddr vaddr);
+
+} // namespace Core::Memory

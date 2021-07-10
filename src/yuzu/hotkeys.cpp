@@ -2,66 +2,45 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
-#include <map>
 #include <QKeySequence>
 #include <QShortcut>
 #include <QTreeWidgetItem>
 #include <QtGlobal>
 #include "yuzu/hotkeys.h"
-#include "yuzu/ui_settings.h"
+#include "yuzu/uisettings.h"
 
-struct Hotkey {
-    Hotkey() : shortcut(nullptr), context(Qt::WindowShortcut) {}
+HotkeyRegistry::HotkeyRegistry() = default;
+HotkeyRegistry::~HotkeyRegistry() = default;
 
-    QKeySequence keyseq;
-    QShortcut* shortcut;
-    Qt::ShortcutContext context;
-};
-
-typedef std::map<QString, Hotkey> HotkeyMap;
-typedef std::map<QString, HotkeyMap> HotkeyGroupMap;
-
-HotkeyGroupMap hotkey_groups;
-
-void SaveHotkeys() {
+void HotkeyRegistry::SaveHotkeys() {
     UISettings::values.shortcuts.clear();
-    for (auto group : hotkey_groups) {
-        for (auto hotkey : group.second) {
-            UISettings::values.shortcuts.emplace_back(
-                UISettings::Shortcut(group.first + "/" + hotkey.first,
-                                     UISettings::ContextualShortcut(hotkey.second.keyseq.toString(),
-                                                                    hotkey.second.context)));
+    for (const auto& group : hotkey_groups) {
+        for (const auto& hotkey : group.second) {
+            UISettings::values.shortcuts.push_back(
+                {hotkey.first, group.first,
+                 UISettings::ContextualShortcut(hotkey.second.keyseq.toString(),
+                                                hotkey.second.context)});
         }
     }
 }
 
-void LoadHotkeys() {
+void HotkeyRegistry::LoadHotkeys() {
     // Make sure NOT to use a reference here because it would become invalid once we call
     // beginGroup()
     for (auto shortcut : UISettings::values.shortcuts) {
-        QStringList cat = shortcut.first.split("/");
-        Q_ASSERT(cat.size() >= 2);
-
-        // RegisterHotkey assigns default keybindings, so use old values as default parameters
-        Hotkey& hk = hotkey_groups[cat[0]][cat[1]];
-        if (!shortcut.second.first.isEmpty()) {
-            hk.keyseq = QKeySequence::fromString(shortcut.second.first);
-            hk.context = (Qt::ShortcutContext)shortcut.second.second;
+        Hotkey& hk = hotkey_groups[shortcut.group][shortcut.name];
+        if (!shortcut.shortcut.first.isEmpty()) {
+            hk.keyseq = QKeySequence::fromString(shortcut.shortcut.first, QKeySequence::NativeText);
+            hk.context = static_cast<Qt::ShortcutContext>(shortcut.shortcut.second);
         }
-        if (hk.shortcut)
+        if (hk.shortcut) {
+            hk.shortcut->disconnect();
             hk.shortcut->setKey(hk.keyseq);
+        }
     }
 }
 
-void RegisterHotkey(const QString& group, const QString& action, const QKeySequence& default_keyseq,
-                    Qt::ShortcutContext default_context) {
-    if (hotkey_groups[group].find(action) == hotkey_groups[group].end()) {
-        hotkey_groups[group][action].keyseq = default_keyseq;
-        hotkey_groups[group][action].context = default_context;
-    }
-}
-
-QShortcut* GetHotkey(const QString& group, const QString& action, QWidget* widget) {
+QShortcut* HotkeyRegistry::GetHotkey(const QString& group, const QString& action, QWidget* widget) {
     Hotkey& hk = hotkey_groups[group][action];
 
     if (!hk.shortcut)
@@ -70,22 +49,11 @@ QShortcut* GetHotkey(const QString& group, const QString& action, QWidget* widge
     return hk.shortcut;
 }
 
-GHotkeysDialog::GHotkeysDialog(QWidget* parent) : QWidget(parent) {
-    ui.setupUi(this);
+QKeySequence HotkeyRegistry::GetKeySequence(const QString& group, const QString& action) {
+    return hotkey_groups[group][action].keyseq;
+}
 
-    for (auto group : hotkey_groups) {
-        QTreeWidgetItem* toplevel_item = new QTreeWidgetItem(QStringList(group.first));
-        for (auto hotkey : group.second) {
-            QStringList columns;
-            columns << hotkey.first << hotkey.second.keyseq.toString();
-            QTreeWidgetItem* item = new QTreeWidgetItem(columns);
-            toplevel_item->addChild(item);
-        }
-        ui.treeWidget->addTopLevelItem(toplevel_item);
-    }
-    // TODO: Make context configurable as well (hiding the column for now)
-    ui.treeWidget->setColumnCount(2);
-
-    ui.treeWidget->resizeColumnToContents(0);
-    ui.treeWidget->resizeColumnToContents(1);
+Qt::ShortcutContext HotkeyRegistry::GetShortcutContext(const QString& group,
+                                                       const QString& action) {
+    return hotkey_groups[group][action].context;
 }

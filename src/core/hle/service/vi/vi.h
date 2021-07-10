@@ -5,43 +5,54 @@
 #pragma once
 
 #include <memory>
-#include <boost/optional.hpp>
-#include "core/hle/kernel/event.h"
-#include "core/hle/service/nvflinger/nvflinger.h"
-#include "core/hle/service/service.h"
+#include "common/common_types.h"
 
-namespace CoreTiming {
-struct EventType;
+namespace Core {
+class System;
 }
 
-namespace Service {
-namespace VI {
+namespace Kernel {
+class HLERequestContext;
+}
 
-class IApplicationDisplayService final : public ServiceFramework<IApplicationDisplayService> {
-public:
-    IApplicationDisplayService(std::shared_ptr<NVFlinger::NVFlinger> nv_flinger);
-    ~IApplicationDisplayService() = default;
+namespace Service::NVFlinger {
+class NVFlinger;
+}
 
-private:
-    void GetRelayService(Kernel::HLERequestContext& ctx);
-    void GetSystemDisplayService(Kernel::HLERequestContext& ctx);
-    void GetManagerDisplayService(Kernel::HLERequestContext& ctx);
-    void GetIndirectDisplayTransactionService(Kernel::HLERequestContext& ctx);
-    void OpenDisplay(Kernel::HLERequestContext& ctx);
-    void CloseDisplay(Kernel::HLERequestContext& ctx);
-    void SetLayerScalingMode(Kernel::HLERequestContext& ctx);
-    void ListDisplays(Kernel::HLERequestContext& ctx);
-    void OpenLayer(Kernel::HLERequestContext& ctx);
-    void CreateStrayLayer(Kernel::HLERequestContext& ctx);
-    void DestroyStrayLayer(Kernel::HLERequestContext& ctx);
-    void GetDisplayVsyncEvent(Kernel::HLERequestContext& ctx);
+namespace Service::SM {
+class ServiceManager;
+}
 
-    std::shared_ptr<NVFlinger::NVFlinger> nv_flinger;
+namespace Service::VI {
+
+enum class DisplayResolution : u32 {
+    DockedWidth = 1920,
+    DockedHeight = 1080,
+    UndockedWidth = 1280,
+    UndockedHeight = 720,
 };
 
-/// Registers all VI services with the specified service manager.
-void InstallInterfaces(SM::ServiceManager& service_manager,
-                       std::shared_ptr<NVFlinger::NVFlinger> nv_flinger);
+/// Permission level for a particular VI service instance
+enum class Permission {
+    User,
+    System,
+    Manager,
+};
 
-} // namespace VI
-} // namespace Service
+/// A policy type that may be requested via GetDisplayService and
+/// GetDisplayServiceWithProxyNameExchange
+enum class Policy {
+    User,
+    Compositor,
+};
+
+namespace detail {
+void GetDisplayServiceImpl(Kernel::HLERequestContext& ctx, Core::System& system,
+                           NVFlinger::NVFlinger& nv_flinger, Permission permission);
+} // namespace detail
+
+/// Registers all VI services with the specified service manager.
+void InstallInterfaces(SM::ServiceManager& service_manager, Core::System& system,
+                       NVFlinger::NVFlinger& nv_flinger);
+
+} // namespace Service::VI

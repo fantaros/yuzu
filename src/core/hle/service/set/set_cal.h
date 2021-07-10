@@ -6,14 +6,16 @@
 
 #include "core/hle/service/service.h"
 
-namespace Service {
-namespace Set {
+namespace Core {
+class System;
+}
+
+namespace Service::Set {
 
 class SET_CAL final : public ServiceFramework<SET_CAL> {
 public:
-    explicit SET_CAL();
-    ~SET_CAL() = default;
+    explicit SET_CAL(Core::System& system_);
+    ~SET_CAL() override;
 };
 
-} // namespace Set
-} // namespace Service
+} // namespace Service::Set

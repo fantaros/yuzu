@@ -7,17 +7,17 @@
 // a simple lockless thread-safe,
 // single reader, single writer queue
 
-#include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <mutex>
-#include "common/common_types.h"
+#include <utility>
 
 namespace Common {
-template <typename T, bool NeedSize = true>
+template <typename T>
 class SPSCQueue {
 public:
-    SPSCQueue() : size(0) {
+    SPSCQueue() {
         write_ptr = read_ptr = new ElementPtr();
     }
     ~SPSCQueue() {
@@ -25,17 +25,18 @@ public:
         delete read_ptr;
     }
 
-    u32 Size() const {
-        static_assert(NeedSize, "using Size() on FifoQueue without NeedSize");
+    [[nodiscard]] std::size_t Size() const {
         return size.load();
     }
 
-    bool Empty() const {
-        return !read_ptr->next.load();
+    [[nodiscard]] bool Empty() const {
+        return Size() == 0;
     }
-    T& Front() const {
+
+    [[nodiscard]] T& Front() const {
         return read_ptr->current;
     }
+
     template <typename Arg>
     void Push(Arg&& t) {
         // create the element, add it to the queue
@@ -45,13 +46,21 @@ public:
         ElementPtr* new_ptr = new ElementPtr();
         write_ptr->next.store(new_ptr, std::memory_order_release);
         write_ptr = new_ptr;
-        if (NeedSize)
-            size++;
+
+        const size_t previous_size{size++};
+
+        // Acquire the mutex and then immediately release it as a fence.
+        // TODO(bunnei): This can be replaced with C++20 waitable atomics when properly supported.
+        // See discussion on https://github.com/yuzu-emu/yuzu/pull/3173 for details.
+        if (previous_size == 0) {
+            std::lock_guard lock{cv_mutex};
+        }
+        cv.notify_one();
     }
 
     void Pop() {
-        if (NeedSize)
-            size--;
+        --size;
+
         ElementPtr* tmpptr = read_ptr;
         // advance the read pointer
         read_ptr = tmpptr->next.load();
@@ -64,8 +73,7 @@ public:
         if (Empty())
             return false;
 
-        if (NeedSize)
-            size--;
+        --size;
 
         ElementPtr* tmpptr = read_ptr;
         read_ptr = tmpptr->next.load(std::memory_order_acquire);
@@ -73,6 +81,20 @@ public:
         tmpptr->next.store(nullptr);
         delete tmpptr;
         return true;
+    }
+
+    void Wait() {
+        if (Empty()) {
+            std::unique_lock lock{cv_mutex};
+            cv.wait(lock, [this]() { return !Empty(); });
+        }
+    }
+
+    T PopWait() {
+        Wait();
+        T t;
+        Pop(t);
+        return t;
     }
 
     // not thread-safe
@@ -87,7 +109,7 @@ private:
     // and a pointer to the next ElementPtr
     class ElementPtr {
     public:
-        ElementPtr() : next(nullptr) {}
+        ElementPtr() {}
         ~ElementPtr() {
             ElementPtr* next_ptr = next.load();
 
@@ -96,27 +118,63 @@ private:
         }
 
         T current;
-        std::atomic<ElementPtr*> next;
+        std::atomic<ElementPtr*> next{nullptr};
     };
 
     ElementPtr* write_ptr;
     ElementPtr* read_ptr;
-    std::atomic<u32> size;
+    std::atomic_size_t size{0};
+    std::mutex cv_mutex;
+    std::condition_variable cv;
 };
 
 // a simple thread-safe,
 // single reader, multiple writer queue
 
-template <typename T, bool NeedSize = true>
-class MPSCQueue : public SPSCQueue<T, NeedSize> {
+template <typename T>
+class MPSCQueue {
 public:
+    [[nodiscard]] std::size_t Size() const {
+        return spsc_queue.Size();
+    }
+
+    [[nodiscard]] bool Empty() const {
+        return spsc_queue.Empty();
+    }
+
+    [[nodiscard]] T& Front() const {
+        return spsc_queue.Front();
+    }
+
     template <typename Arg>
     void Push(Arg&& t) {
-        std::lock_guard<std::mutex> lock(write_lock);
-        SPSCQueue<T, NeedSize>::Push(t);
+        std::lock_guard lock{write_lock};
+        spsc_queue.Push(t);
+    }
+
+    void Pop() {
+        return spsc_queue.Pop();
+    }
+
+    bool Pop(T& t) {
+        return spsc_queue.Pop(t);
+    }
+
+    void Wait() {
+        spsc_queue.Wait();
+    }
+
+    T PopWait() {
+        return spsc_queue.PopWait();
+    }
+
+    // not thread-safe
+    void Clear() {
+        spsc_queue.Clear();
     }
 
 private:
+    SPSCQueue<T> spsc_queue;
     std::mutex write_lock;
 };
 } // namespace Common

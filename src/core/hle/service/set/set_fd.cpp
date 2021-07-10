@@ -4,10 +4,10 @@
 
 #include "core/hle/service/set/set_fd.h"
 
-namespace Service {
-namespace Set {
+namespace Service::Set {
 
-SET_FD::SET_FD() : ServiceFramework("set:fd") {
+SET_FD::SET_FD(Core::System& system_) : ServiceFramework{system_, "set:fd"} {
+    // clang-format off
     static const FunctionInfo functions[] = {
         {2, nullptr, "SetSettingsItemValue"},
         {3, nullptr, "ResetSettingsItemValue"},
@@ -17,9 +17,13 @@ SET_FD::SET_FD() : ServiceFramework("set:fd") {
         {20, nullptr, "SetWebInspectorFlag"},
         {21, nullptr, "SetAllowedSslHosts"},
         {22, nullptr, "SetHostFsMountPoint"},
+        {23, nullptr, "SetMemoryUsageRateFlag"},
     };
+    // clang-format on
+
     RegisterHandlers(functions);
 }
 
-} // namespace Set
-} // namespace Service
+SET_FD::~SET_FD() = default;
+
+} // namespace Service::Set

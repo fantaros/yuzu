@@ -6,18 +6,16 @@
 
 #include "core/hle/service/service.h"
 
-namespace Kernel {
-class HLERequestContext;
+namespace Core {
+class System;
 }
 
-namespace Service {
-namespace Audio {
+namespace Service::Audio {
 
 class AudRecU final : public ServiceFramework<AudRecU> {
 public:
-    explicit AudRecU();
-    ~AudRecU() = default;
+    explicit AudRecU(Core::System& system_);
+    ~AudRecU() override;
 };
 
-} // namespace Audio
-} // namespace Service
+} // namespace Service::Audio

@@ -4,37 +4,60 @@
 
 #pragma once
 
+#include <memory>
 #include <string>
+#include <vector>
 #include "common/common_types.h"
-#include "core/hle/kernel/kernel.h"
-#include "core/loader/linker.h"
 #include "core/loader/loader.h"
+
+namespace Core {
+class System;
+}
+
+namespace FileSys {
+class NACP;
+}
+
+namespace Kernel {
+class KProcess;
+}
 
 namespace Loader {
 
 /// Loads an NRO file
-class AppLoader_NRO final : public AppLoader, Linker {
+class AppLoader_NRO final : public AppLoader {
 public:
-    AppLoader_NRO(FileUtil::IOFile&& file, std::string filepath);
+    explicit AppLoader_NRO(FileSys::VirtualFile file_);
+    ~AppLoader_NRO() override;
 
     /**
-     * Returns the type of the file
-     * @param file FileUtil::IOFile open file
-     * @param filepath Path of the file that we are opening.
-     * @return FileType found, or FileType::Error if this loader doesn't know it
+     * Identifies whether or not the given file is an NRO file.
+     *
+     * @param nro_file The file to identify.
+     *
+     * @return FileType::NRO, or FileType::Error if the file is not an NRO file.
      */
-    static FileType IdentifyType(FileUtil::IOFile& file, const std::string& filepath);
+    static FileType IdentifyType(const FileSys::VirtualFile& nro_file);
 
-    FileType GetFileType() override {
-        return IdentifyType(file, filepath);
+    FileType GetFileType() const override {
+        return IdentifyType(file);
     }
 
-    ResultStatus Load(Kernel::SharedPtr<Kernel::Process>& process) override;
+    LoadResult Load(Kernel::KProcess& process, Core::System& system) override;
+
+    ResultStatus ReadIcon(std::vector<u8>& buffer) override;
+    ResultStatus ReadProgramId(u64& out_program_id) override;
+    ResultStatus ReadRomFS(FileSys::VirtualFile& dir) override;
+    ResultStatus ReadTitle(std::string& title) override;
+    ResultStatus ReadControlData(FileSys::NACP& control) override;
+    bool IsRomFSUpdatable() const override;
 
 private:
-    bool LoadNro(const std::string& path, VAddr load_base);
+    bool LoadNro(Kernel::KProcess& process, const FileSys::VfsFile& nro_file);
 
-    std::string filepath;
+    std::vector<u8> icon_data;
+    std::unique_ptr<FileSys::NACP> nacp;
+    FileSys::VirtualFile romfs;
 };
 
 } // namespace Loader

@@ -4,338 +4,184 @@
 
 #pragma once
 
+#include <chrono>
+
+#include "core/hle/service/hid/controllers/controller_base.h"
 #include "core/hle/service/service.h"
-#include "core/settings.h"
 
-namespace Service {
-namespace HID {
+namespace Core::Timing {
+struct EventType;
+}
 
-// Begin enums and output structs
+namespace Service::SM {
+class ServiceManager;
+}
 
-constexpr u32 HID_NUM_ENTRIES = 17;
-constexpr u32 HID_NUM_LAYOUTS = 7;
-constexpr s32 HID_JOYSTICK_MAX = 0x8000;
-constexpr s32 HID_JOYSTICK_MIN = -0x8000;
+namespace Service::HID {
 
-constexpr u32 JOYCON_BODY_NEON_RED = 0xFF3C28;
-constexpr u32 JOYCON_BUTTONS_NEON_RED = 0x1E0A0A;
-constexpr u32 JOYCON_BODY_NEON_BLUE = 0x0AB9E6;
-constexpr u32 JOYCON_BUTTONS_NEON_BLUE = 0x001E1E;
+enum class HidController : std::size_t {
+    DebugPad,
+    Touchscreen,
+    Mouse,
+    Keyboard,
+    XPad,
+    HomeButton,
+    SleepButton,
+    CaptureButton,
+    InputDetector,
+    UniquePad,
+    NPad,
+    Gesture,
+    ConsoleSixAxisSensor,
 
-enum ControllerType : u32 {
-    ControllerType_ProController = 1 << 0,
-    ControllerType_Handheld = 1 << 1,
-    ControllerType_JoyconPair = 1 << 2,
-    ControllerType_JoyconLeft = 1 << 3,
-    ControllerType_JoyconRight = 1 << 4,
+    MaxControllers,
 };
 
-enum ControllerLayoutType : u32 {
-    Layout_ProController = 0, // Pro Controller or HID gamepad
-    Layout_Handheld = 1,      // Two Joy-Con docked to rails
-    Layout_Single = 2, // Horizontal single Joy-Con or pair of Joy-Con, adjusted for orientation
-    Layout_Left = 3,   // Only raw left Joy-Con state, no orientation adjustment
-    Layout_Right = 4,  // Only raw right Joy-Con state, no orientation adjustment
-    Layout_DefaultDigital = 5, // Same as next, but sticks have 8-direction values only
-    Layout_Default = 6, // Safe default, single Joy-Con have buttons/sticks rotated for orientation
+class IAppletResource final : public ServiceFramework<IAppletResource> {
+public:
+    explicit IAppletResource(Core::System& system_);
+    ~IAppletResource() override;
+
+    void ActivateController(HidController controller);
+    void DeactivateController(HidController controller);
+
+    template <typename T>
+    T& GetController(HidController controller) {
+        return static_cast<T&>(*controllers[static_cast<size_t>(controller)]);
+    }
+
+    template <typename T>
+    const T& GetController(HidController controller) const {
+        return static_cast<T&>(*controllers[static_cast<size_t>(controller)]);
+    }
+
+private:
+    template <typename T>
+    void MakeController(HidController controller) {
+        controllers[static_cast<std::size_t>(controller)] = std::make_unique<T>(system);
+    }
+
+    void GetSharedMemoryHandle(Kernel::HLERequestContext& ctx);
+    void UpdateControllers(std::uintptr_t user_data, std::chrono::nanoseconds ns_late);
+    void UpdateMotion(std::uintptr_t user_data, std::chrono::nanoseconds ns_late);
+
+    std::shared_ptr<Core::Timing::EventType> pad_update_event;
+    std::shared_ptr<Core::Timing::EventType> motion_update_event;
+
+    std::array<std::unique_ptr<ControllerBase>, static_cast<size_t>(HidController::MaxControllers)>
+        controllers{};
 };
 
-enum ControllerColorDescription {
-    ColorDesc_ColorsNonexistent = 1 << 1,
-};
+class Hid final : public ServiceFramework<Hid> {
+public:
+    explicit Hid(Core::System& system_);
+    ~Hid() override;
 
-enum ControllerConnectionState {
-    ConnectionState_Connected = 1 << 0,
-    ConnectionState_Wired = 1 << 1,
-};
+    std::shared_ptr<IAppletResource> GetAppletResource();
 
-enum ControllerID {
-    Controller_Player1 = 0,
-    Controller_Player2 = 1,
-    Controller_Player3 = 2,
-    Controller_Player4 = 3,
-    Controller_Player5 = 4,
-    Controller_Player6 = 5,
-    Controller_Player7 = 6,
-    Controller_Player8 = 7,
-    Controller_Handheld = 8,
-    Controller_Unknown = 9,
-};
+private:
+    void CreateAppletResource(Kernel::HLERequestContext& ctx);
+    void ActivateDebugPad(Kernel::HLERequestContext& ctx);
+    void ActivateTouchScreen(Kernel::HLERequestContext& ctx);
+    void ActivateMouse(Kernel::HLERequestContext& ctx);
+    void ActivateKeyboard(Kernel::HLERequestContext& ctx);
+    void SendKeyboardLockKeyEvent(Kernel::HLERequestContext& ctx);
+    void ActivateXpad(Kernel::HLERequestContext& ctx);
+    void GetXpadIDs(Kernel::HLERequestContext& ctx);
+    void ActivateSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void DeactivateSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void StartSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void StopSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void EnableSixAxisSensorFusion(Kernel::HLERequestContext& ctx);
+    void SetSixAxisSensorFusionParameters(Kernel::HLERequestContext& ctx);
+    void GetSixAxisSensorFusionParameters(Kernel::HLERequestContext& ctx);
+    void ResetSixAxisSensorFusionParameters(Kernel::HLERequestContext& ctx);
+    void SetGyroscopeZeroDriftMode(Kernel::HLERequestContext& ctx);
+    void GetGyroscopeZeroDriftMode(Kernel::HLERequestContext& ctx);
+    void ResetGyroscopeZeroDriftMode(Kernel::HLERequestContext& ctx);
+    void IsSixAxisSensorAtRest(Kernel::HLERequestContext& ctx);
+    void IsFirmwareUpdateAvailableForSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void ActivateGesture(Kernel::HLERequestContext& ctx);
+    void SetSupportedNpadStyleSet(Kernel::HLERequestContext& ctx);
+    void GetSupportedNpadStyleSet(Kernel::HLERequestContext& ctx);
+    void SetSupportedNpadIdType(Kernel::HLERequestContext& ctx);
+    void ActivateNpad(Kernel::HLERequestContext& ctx);
+    void DeactivateNpad(Kernel::HLERequestContext& ctx);
+    void AcquireNpadStyleSetUpdateEventHandle(Kernel::HLERequestContext& ctx);
+    void DisconnectNpad(Kernel::HLERequestContext& ctx);
+    void GetPlayerLedPattern(Kernel::HLERequestContext& ctx);
+    void ActivateNpadWithRevision(Kernel::HLERequestContext& ctx);
+    void SetNpadJoyHoldType(Kernel::HLERequestContext& ctx);
+    void GetNpadJoyHoldType(Kernel::HLERequestContext& ctx);
+    void SetNpadJoyAssignmentModeSingleByDefault(Kernel::HLERequestContext& ctx);
+    void SetNpadJoyAssignmentModeSingle(Kernel::HLERequestContext& ctx);
+    void SetNpadJoyAssignmentModeDual(Kernel::HLERequestContext& ctx);
+    void MergeSingleJoyAsDualJoy(Kernel::HLERequestContext& ctx);
+    void StartLrAssignmentMode(Kernel::HLERequestContext& ctx);
+    void StopLrAssignmentMode(Kernel::HLERequestContext& ctx);
+    void SetNpadHandheldActivationMode(Kernel::HLERequestContext& ctx);
+    void GetNpadHandheldActivationMode(Kernel::HLERequestContext& ctx);
+    void SwapNpadAssignment(Kernel::HLERequestContext& ctx);
+    void IsUnintendedHomeButtonInputProtectionEnabled(Kernel::HLERequestContext& ctx);
+    void EnableUnintendedHomeButtonInputProtection(Kernel::HLERequestContext& ctx);
+    void SetNpadAnalogStickUseCenterClamp(Kernel::HLERequestContext& ctx);
+    void GetVibrationDeviceInfo(Kernel::HLERequestContext& ctx);
+    void SendVibrationValue(Kernel::HLERequestContext& ctx);
+    void GetActualVibrationValue(Kernel::HLERequestContext& ctx);
+    void CreateActiveVibrationDeviceList(Kernel::HLERequestContext& ctx);
+    void PermitVibration(Kernel::HLERequestContext& ctx);
+    void IsVibrationPermitted(Kernel::HLERequestContext& ctx);
+    void SendVibrationValues(Kernel::HLERequestContext& ctx);
+    void SendVibrationGcErmCommand(Kernel::HLERequestContext& ctx);
+    void GetActualVibrationGcErmCommand(Kernel::HLERequestContext& ctx);
+    void BeginPermitVibrationSession(Kernel::HLERequestContext& ctx);
+    void EndPermitVibrationSession(Kernel::HLERequestContext& ctx);
+    void IsVibrationDeviceMounted(Kernel::HLERequestContext& ctx);
+    void ActivateConsoleSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void StartConsoleSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void StopConsoleSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void ActivateSevenSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void StartSevenSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void StopSevenSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void InitializeSevenSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void FinalizeSevenSixAxisSensor(Kernel::HLERequestContext& ctx);
+    void ResetSevenSixAxisSensorTimestamp(Kernel::HLERequestContext& ctx);
+    void SetIsPalmaAllConnectable(Kernel::HLERequestContext& ctx);
+    void SetPalmaBoostMode(Kernel::HLERequestContext& ctx);
+    void SetNpadCommunicationMode(Kernel::HLERequestContext& ctx);
+    void GetNpadCommunicationMode(Kernel::HLERequestContext& ctx);
 
-// End enums and output structs
-
-// Begin TouchScreen
-
-struct TouchScreenHeader {
-    u64 timestamp_ticks;
-    u64 num_entries;
-    u64 latest_entry;
-    u64 max_entry_index;
-    u64 timestamp;
-};
-static_assert(sizeof(TouchScreenHeader) == 0x28,
-              "HID touch screen header structure has incorrect size");
-
-struct TouchScreenEntryHeader {
-    u64 timestamp;
-    u64 num_touches;
-};
-static_assert(sizeof(TouchScreenEntryHeader) == 0x10,
-              "HID touch screen entry header structure has incorrect size");
-
-struct TouchScreenEntryTouch {
-    u64 timestamp;
-    u32 padding;
-    u32 touch_index;
-    u32 x;
-    u32 y;
-    u32 diameter_x;
-    u32 diameter_y;
-    u32 angle;
-    u32 padding_2;
-};
-static_assert(sizeof(TouchScreenEntryTouch) == 0x28,
-              "HID touch screen touch structure has incorrect size");
-
-struct TouchScreenEntry {
-    TouchScreenEntryHeader header;
-    std::array<TouchScreenEntryTouch, 16> touches;
-    u64 unk;
-};
-static_assert(sizeof(TouchScreenEntry) == 0x298,
-              "HID touch screen entry structure has incorrect size");
-
-struct TouchScreen {
-    TouchScreenHeader header;
-    std::array<TouchScreenEntry, 17> entries;
-    std::array<u8, 0x3c0> padding;
-};
-static_assert(sizeof(TouchScreen) == 0x3000, "HID touch screen structure has incorrect size");
-
-// End TouchScreen
-
-// Begin Mouse
-
-struct MouseHeader {
-    u64 timestamp_ticks;
-    u64 num_entries;
-    u64 latest_entry;
-    u64 max_entry_index;
-};
-static_assert(sizeof(MouseHeader) == 0x20, "HID mouse header structure has incorrect size");
-
-struct MouseButtonState {
-    union {
-        u64 hex{};
-
-        // Buttons
-        BitField<0, 1, u64> left;
-        BitField<1, 1, u64> right;
-        BitField<2, 1, u64> middle;
-        BitField<3, 1, u64> forward;
-        BitField<4, 1, u64> back;
+    enum class VibrationDeviceType : u32 {
+        Unknown = 0,
+        LinearResonantActuator = 1,
+        GcErm = 2,
     };
-};
 
-struct MouseEntry {
-    u64 timestamp;
-    u64 timestamp_2;
-    u32 x;
-    u32 y;
-    u32 velocity_x;
-    u32 velocity_y;
-    u32 scroll_velocity_x;
-    u32 scroll_velocity_y;
-    MouseButtonState buttons;
-};
-static_assert(sizeof(MouseEntry) == 0x30, "HID mouse entry structure has incorrect size");
-
-struct Mouse {
-    MouseHeader header;
-    std::array<MouseEntry, 17> entries;
-    std::array<u8, 0xB0> padding;
-};
-static_assert(sizeof(Mouse) == 0x400, "HID mouse structure has incorrect size");
-
-// End Mouse
-
-// Begin Keyboard
-
-struct KeyboardHeader {
-    u64 timestamp_ticks;
-    u64 num_entries;
-    u64 latest_entry;
-    u64 max_entry_index;
-};
-static_assert(sizeof(KeyboardHeader) == 0x20, "HID keyboard header structure has incorrect size");
-
-struct KeyboardModifierKeyState {
-    union {
-        u64 hex{};
-
-        // Buttons
-        BitField<0, 1, u64> lctrl;
-        BitField<1, 1, u64> lshift;
-        BitField<2, 1, u64> lalt;
-        BitField<3, 1, u64> lmeta;
-        BitField<4, 1, u64> rctrl;
-        BitField<5, 1, u64> rshift;
-        BitField<6, 1, u64> ralt;
-        BitField<7, 1, u64> rmeta;
-        BitField<8, 1, u64> capslock;
-        BitField<9, 1, u64> scrolllock;
-        BitField<10, 1, u64> numlock;
+    enum class VibrationDevicePosition : u32 {
+        None = 0,
+        Left = 1,
+        Right = 2,
     };
-};
 
-struct KeyboardEntry {
-    u64 timestamp;
-    u64 timestamp_2;
-    KeyboardModifierKeyState modifier;
-    u32 keys[8];
-};
-static_assert(sizeof(KeyboardEntry) == 0x38, "HID keyboard entry structure has incorrect size");
-
-struct Keyboard {
-    KeyboardHeader header;
-    std::array<KeyboardEntry, 17> entries;
-    std::array<u8, 0x28> padding;
-};
-static_assert(sizeof(Keyboard) == 0x400, "HID keyboard structure has incorrect size");
-
-// End Keyboard
-
-// Begin Controller
-
-struct ControllerMAC {
-    u64 timestamp;
-    std::array<u8, 0x8> mac;
-    u64 unk;
-    u64 timestamp_2;
-};
-static_assert(sizeof(ControllerMAC) == 0x20, "HID controller MAC structure has incorrect size");
-
-struct ControllerHeader {
-    u32 type;
-    u32 is_half;
-    u32 single_colors_descriptor;
-    u32 single_color_body;
-    u32 single_color_buttons;
-    u32 split_colors_descriptor;
-    u32 left_color_body;
-    u32 left_color_buttons;
-    u32 right_color_body;
-    u32 right_color_buttons;
-};
-static_assert(sizeof(ControllerHeader) == 0x28,
-              "HID controller header structure has incorrect size");
-
-struct ControllerLayoutHeader {
-    u64 timestamp_ticks;
-    u64 num_entries;
-    u64 latest_entry;
-    u64 max_entry_index;
-};
-static_assert(sizeof(ControllerLayoutHeader) == 0x20,
-              "HID controller layout header structure has incorrect size");
-
-struct ControllerPadState {
-    union {
-        u64 hex{};
-
-        // Buttons
-        BitField<0, 1, u64> a;
-        BitField<1, 1, u64> b;
-        BitField<2, 1, u64> x;
-        BitField<3, 1, u64> y;
-        BitField<4, 1, u64> lstick;
-        BitField<5, 1, u64> rstick;
-        BitField<6, 1, u64> l;
-        BitField<7, 1, u64> r;
-        BitField<8, 1, u64> zl;
-        BitField<9, 1, u64> zr;
-        BitField<10, 1, u64> plus;
-        BitField<11, 1, u64> minus;
-
-        // D-pad buttons
-        BitField<12, 1, u64> dleft;
-        BitField<13, 1, u64> dup;
-        BitField<14, 1, u64> dright;
-        BitField<15, 1, u64> ddown;
-
-        // Left stick directions
-        BitField<16, 1, u64> lstick_left;
-        BitField<17, 1, u64> lstick_up;
-        BitField<18, 1, u64> lstick_right;
-        BitField<19, 1, u64> lstick_down;
-
-        // Right stick directions
-        BitField<20, 1, u64> rstick_left;
-        BitField<21, 1, u64> rstick_up;
-        BitField<22, 1, u64> rstick_right;
-        BitField<23, 1, u64> rstick_down;
-
-        BitField<24, 1, u64> sl;
-        BitField<25, 1, u64> sr;
+    enum class VibrationGcErmCommand : u64 {
+        Stop = 0,
+        Start = 1,
+        StopHard = 2,
     };
-};
 
-struct ControllerInputEntry {
-    u64 timestamp;
-    u64 timestamp_2;
-    ControllerPadState buttons;
-    u32 joystick_left_x;
-    u32 joystick_left_y;
-    u32 joystick_right_x;
-    u32 joystick_right_y;
-    u64 connection_state;
-};
-static_assert(sizeof(ControllerInputEntry) == 0x30,
-              "HID controller input entry structure has incorrect size");
+    struct VibrationDeviceInfo {
+        VibrationDeviceType type{};
+        VibrationDevicePosition position{};
+    };
+    static_assert(sizeof(VibrationDeviceInfo) == 0x8, "VibrationDeviceInfo has incorrect size.");
 
-struct ControllerLayout {
-    ControllerLayoutHeader header;
-    std::array<ControllerInputEntry, 17> entries;
+    std::shared_ptr<IAppletResource> applet_resource;
 };
-static_assert(sizeof(ControllerLayout) == 0x350,
-              "HID controller layout structure has incorrect size");
-
-struct Controller {
-    ControllerHeader header;
-    std::array<ControllerLayout, 7> layouts;
-    std::array<u8, 0x2a70> unk_1;
-    ControllerMAC mac_left;
-    ControllerMAC mac_right;
-    std::array<u8, 0xdf8> unk_2;
-};
-static_assert(sizeof(Controller) == 0x5000, "HID controller structure has incorrect size");
-
-// End Controller
-
-struct SharedMemory {
-    std::array<u8, 0x400> header;
-    TouchScreen touchscreen;
-    Mouse mouse;
-    Keyboard keyboard;
-    std::array<u8, 0x400> unk_section_1;
-    std::array<u8, 0x400> unk_section_2;
-    std::array<u8, 0x400> unk_section_3;
-    std::array<u8, 0x400> unk_section_4;
-    std::array<u8, 0x200> unk_section_5;
-    std::array<u8, 0x200> unk_section_6;
-    std::array<u8, 0x200> unk_section_7;
-    std::array<u8, 0x800> unk_section_8;
-    std::array<u8, 0x4000> controller_serials;
-    std::array<Controller, 10> controllers;
-    std::array<u8, 0x4600> unk_section_9;
-};
-static_assert(sizeof(SharedMemory) == 0x40000, "HID Shared Memory structure has incorrect size");
 
 /// Reload input devices. Used when input configuration changed
 void ReloadInputDevices();
 
 /// Registers all HID services with the specified service manager.
-void InstallInterfaces(SM::ServiceManager& service_manager);
+void InstallInterfaces(SM::ServiceManager& service_manager, Core::System& system);
 
-} // namespace HID
-} // namespace Service
+} // namespace Service::HID

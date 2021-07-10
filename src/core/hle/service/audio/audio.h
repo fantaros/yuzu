@@ -4,13 +4,17 @@
 
 #pragma once
 
-#include "core/hle/service/service.h"
+namespace Core {
+class System;
+}
 
-namespace Service {
-namespace Audio {
+namespace Service::SM {
+class ServiceManager;
+}
+
+namespace Service::Audio {
 
 /// Registers all Audio services with the specified service manager.
-void InstallInterfaces(SM::ServiceManager& service_manager);
+void InstallInterfaces(SM::ServiceManager& service_manager, Core::System& system);
 
-} // namespace Audio
-} // namespace Service
+} // namespace Service::Audio

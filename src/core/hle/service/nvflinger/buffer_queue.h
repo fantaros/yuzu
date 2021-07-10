@@ -4,18 +4,29 @@
 
 #pragma once
 
+#include <condition_variable>
+#include <list>
+#include <mutex>
+#include <optional>
 #include <vector>
-#include <boost/optional.hpp>
+
+#include "common/common_funcs.h"
+#include "common/math_util.h"
 #include "common/swap.h"
-#include "core/hle/kernel/event.h"
+#include "core/hle/kernel/k_event.h"
+#include "core/hle/kernel/k_readable_event.h"
+#include "core/hle/service/nvdrv/nvdata.h"
 
-namespace CoreTiming {
-struct EventType;
-}
+namespace Kernel {
+class KernelCore;
+class KEvent;
+class KReadableEvent;
+class KWritableEvent;
+} // namespace Kernel
 
-namespace Service {
-namespace NVFlinger {
+namespace Service::NVFlinger {
 
+constexpr u32 buffer_slots = 0x40;
 struct IGBPBuffer {
     u32_le magic;
     u32_le width;
@@ -43,10 +54,12 @@ public:
         NativeWindowFormat = 2,
     };
 
-    BufferQueue(u32 id, u64 layer_id);
-    ~BufferQueue() = default;
+    explicit BufferQueue(Kernel::KernelCore& kernel, u32 id_, u64 layer_id_);
+    ~BufferQueue();
 
     enum class BufferTransformFlags : u32 {
+        /// No transform flags are set
+        Unset = 0x00,
         /// Flip source image horizontally (around the vertical axis)
         FlipH = 0x01,
         /// Flip source image vertically (around the horizontal axis)
@@ -54,9 +67,19 @@ public:
         /// Rotate source image 90 degrees clockwise
         Rotate90 = 0x04,
         /// Rotate source image 180 degrees
-        Roate180 = 0x03,
+        Rotate180 = 0x03,
         /// Rotate source image 270 degrees clockwise
-        Roate270 = 0x07,
+        Rotate270 = 0x07,
+    };
+
+    enum class PixelFormat : u32 {
+        RGBA8888 = 1,
+        RGBX8888 = 2,
+        RGB888 = 3,
+        RGB565 = 4,
+        BGRA8888 = 5,
+        RGBA5551 = 6,
+        RRGBA4444 = 7,
     };
 
     struct Buffer {
@@ -66,31 +89,53 @@ public:
         Status status = Status::Free;
         IGBPBuffer igbp_buffer;
         BufferTransformFlags transform;
+        Common::Rectangle<int> crop_rect;
+        u32 swap_interval;
+        Service::Nvidia::MultiFence multi_fence;
     };
 
-    void SetPreallocatedBuffer(u32 slot, IGBPBuffer& buffer);
-    u32 DequeueBuffer(u32 pixel_format, u32 width, u32 height);
+    void SetPreallocatedBuffer(u32 slot, const IGBPBuffer& igbp_buffer);
+    std::optional<std::pair<u32, Service::Nvidia::MultiFence*>> DequeueBuffer(u32 width,
+                                                                              u32 height);
     const IGBPBuffer& RequestBuffer(u32 slot) const;
-    void QueueBuffer(u32 slot, BufferTransformFlags transform);
-    boost::optional<const Buffer&> AcquireBuffer();
+    void QueueBuffer(u32 slot, BufferTransformFlags transform,
+                     const Common::Rectangle<int>& crop_rect, u32 swap_interval,
+                     Service::Nvidia::MultiFence& multi_fence);
+    void CancelBuffer(u32 slot, const Service::Nvidia::MultiFence& multi_fence);
+    std::optional<std::reference_wrapper<const Buffer>> AcquireBuffer();
     void ReleaseBuffer(u32 slot);
+    void Connect();
+    void Disconnect();
     u32 Query(QueryType type);
 
     u32 GetId() const {
         return id;
     }
 
-    Kernel::SharedPtr<Kernel::Event> GetNativeHandle() const {
-        return native_handle;
+    bool IsConnected() const {
+        return is_connect;
     }
 
-private:
-    u32 id;
-    u64 layer_id;
+    Kernel::KWritableEvent& GetWritableBufferWaitEvent();
 
-    std::vector<Buffer> queue;
-    Kernel::SharedPtr<Kernel::Event> native_handle;
+    Kernel::KReadableEvent& GetBufferWaitEvent();
+
+private:
+    BufferQueue(const BufferQueue&) = delete;
+
+    u32 id{};
+    u64 layer_id{};
+    std::atomic_bool is_connect{};
+
+    std::list<u32> free_buffers;
+    std::array<Buffer, buffer_slots> buffers;
+    std::list<u32> queue_sequence;
+    Kernel::KEvent buffer_wait_event;
+
+    std::mutex free_buffers_mutex;
+    std::condition_variable free_buffers_condition;
+
+    std::mutex queue_sequence_mutex;
 };
 
-} // namespace NVFlinger
-} // namespace Service
+} // namespace Service::NVFlinger

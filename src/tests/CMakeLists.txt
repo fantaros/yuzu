@@ -1,18 +1,20 @@
 add_executable(tests
+    common/bit_field.cpp
+    common/cityhash.cpp
+    common/fibers.cpp
+    common/host_memory.cpp
     common/param_package.cpp
-    core/arm/arm_test_common.cpp
-    core/arm/arm_test_common.h
+    common/ring_buffer.cpp
+    common/unique_function.cpp
     core/core_timing.cpp
-    core/file_sys/path_parser.cpp
-    core/memory/memory.cpp
-    glad.cpp
+    core/network/network.cpp
     tests.cpp
+    video_core/buffer_base.cpp
 )
 
 create_target_directory_groups(tests)
 
 target_link_libraries(tests PRIVATE common core)
-target_link_libraries(tests PRIVATE glad) # To support linker work-around
 target_link_libraries(tests PRIVATE ${PLATFORM_LIBRARIES} catch-single-include Threads::Threads)
 
 add_test(NAME tests COMMAND tests)

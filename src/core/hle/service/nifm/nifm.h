@@ -4,24 +4,17 @@
 
 #pragma once
 
-#include "core/hle/service/service.h"
+namespace Core {
+class System;
+}
 
-namespace Service {
-namespace NIFM {
+namespace Service::SM {
+class ServiceManager;
+}
 
-class IGeneralService final : public ServiceFramework<IGeneralService> {
-public:
-    IGeneralService();
+namespace Service::NIFM {
 
-private:
-    void GetClientId(Kernel::HLERequestContext& ctx);
-    void CreateScanRequest(Kernel::HLERequestContext& ctx);
-    void CreateRequest(Kernel::HLERequestContext& ctx);
-    void RemoveNetworkProfile(Kernel::HLERequestContext& ctx);
-    void CreateTemporaryNetworkProfile(Kernel::HLERequestContext& ctx);
-};
+/// Registers all NIFM services with the specified service manager.
+void InstallInterfaces(SM::ServiceManager& service_manager, Core::System& system);
 
-void InstallInterfaces(SM::ServiceManager& service_manager);
-
-} // namespace NIFM
-} // namespace Service
+} // namespace Service::NIFM

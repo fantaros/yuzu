@@ -1,16 +1,11 @@
 #!/bin/bash -ex
 
-apt-get update
-apt-get install -y build-essential git libqt5opengl5-dev libsdl2-dev libssl-dev python qtbase5-dev wget
-
-# Get a recent version of CMake
-wget https://cmake.org/files/v3.10/cmake-3.10.1-Linux-x86_64.sh
-sh cmake-3.10.1-Linux-x86_64.sh --exclude-subdir --prefix=/ --skip-license
-
 cd /yuzu
 
 mkdir build && cd build
-cmake .. -DYUZU_BUILD_UNICORN=ON -DCMAKE_BUILD_TYPE=Release
-make -j4
+cmake .. -G Ninja -DYUZU_USE_QT_WEB_ENGINE=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=/usr/lib/ccache/gcc -DCMAKE_CXX_COMPILER=/usr/lib/ccache/g++ -DYUZU_ENABLE_COMPATIBILITY_REPORTING=${ENABLE_COMPATIBILITY_REPORTING:-"OFF"} -DENABLE_COMPATIBILITY_LIST_DOWNLOAD=ON -DUSE_DISCORD_PRESENCE=ON
+ninja
+
+ccache -s
 
 ctest -VV -C Release

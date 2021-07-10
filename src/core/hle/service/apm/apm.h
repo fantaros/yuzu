@@ -4,24 +4,19 @@
 
 #pragma once
 
-#include "core/hle/service/service.h"
+namespace Core {
+class System;
+}
 
-namespace Service {
-namespace APM {
-
-enum class PerformanceMode : u8 {
-    Handheld = 0,
-    Docked = 1,
-};
+namespace Service::APM {
 
 class Module final {
 public:
-    Module() = default;
-    ~Module() = default;
+    Module();
+    ~Module();
 };
 
 /// Registers all AM services with the specified service manager.
-void InstallInterfaces(SM::ServiceManager& service_manager);
+void InstallInterfaces(Core::System& system);
 
-} // namespace APM
-} // namespace Service
+} // namespace Service::APM

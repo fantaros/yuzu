@@ -6,14 +6,16 @@
 
 #include "core/hle/service/service.h"
 
-namespace Service {
-namespace Set {
+namespace Core {
+class System;
+}
+
+namespace Service::Set {
 
 class SET_FD final : public ServiceFramework<SET_FD> {
 public:
-    explicit SET_FD();
-    ~SET_FD() = default;
+    explicit SET_FD(Core::System& system_);
+    ~SET_FD() override;
 };
 
-} // namespace Set
-} // namespace Service
+} // namespace Service::Set

@@ -2,50 +2,82 @@
 // Licensed under GPLv2 or any later version
 // Refer to the license.txt file included.
 
-#include <cinttypes>
-#include "common/file_util.h"
+#include <cstddef>
+#include <vector>
+
 #include "common/logging/log.h"
 #include "core/file_sys/program_metadata.h"
+#include "core/file_sys/vfs.h"
 #include "core/loader/loader.h"
 
 namespace FileSys {
 
-Loader::ResultStatus ProgramMetadata::Load(const std::string& file_path) {
-    FileUtil::IOFile file(file_path, "rb");
-    if (!file.IsOpen())
-        return Loader::ResultStatus::Error;
+ProgramMetadata::ProgramMetadata() = default;
 
-    std::vector<u8> file_data(file.GetSize());
+ProgramMetadata::~ProgramMetadata() = default;
 
-    if (!file.ReadBytes(file_data.data(), file_data.size()))
-        return Loader::ResultStatus::Error;
+Loader::ResultStatus ProgramMetadata::Load(VirtualFile file) {
+    const std::size_t total_size = file->GetSize();
+    if (total_size < sizeof(Header)) {
+        return Loader::ResultStatus::ErrorBadNPDMHeader;
+    }
 
-    Loader::ResultStatus result = Load(file_data);
-    if (result != Loader::ResultStatus::Success)
-        LOG_ERROR(Service_FS, "Failed to load NPDM from file %s!", file_path.c_str());
+    if (sizeof(Header) != file->ReadObject(&npdm_header)) {
+        return Loader::ResultStatus::ErrorBadNPDMHeader;
+    }
+
+    if (sizeof(AcidHeader) != file->ReadObject(&acid_header, npdm_header.acid_offset)) {
+        return Loader::ResultStatus::ErrorBadACIDHeader;
+    }
+
+    if (sizeof(AciHeader) != file->ReadObject(&aci_header, npdm_header.aci_offset)) {
+        return Loader::ResultStatus::ErrorBadACIHeader;
+    }
+
+    if (sizeof(FileAccessControl) != file->ReadObject(&acid_file_access, acid_header.fac_offset)) {
+        return Loader::ResultStatus::ErrorBadFileAccessControl;
+    }
+
+    if (sizeof(FileAccessHeader) != file->ReadObject(&aci_file_access, aci_header.fah_offset)) {
+        return Loader::ResultStatus::ErrorBadFileAccessHeader;
+    }
+
+    aci_kernel_capabilities.resize(aci_header.kac_size / sizeof(u32));
+    const u64 read_size = aci_header.kac_size;
+    const u64 read_offset = npdm_header.aci_offset + aci_header.kac_offset;
+    if (file->ReadBytes(aci_kernel_capabilities.data(), read_size, read_offset) != read_size) {
+        return Loader::ResultStatus::ErrorBadKernelCapabilityDescriptors;
+    }
+
+    return Loader::ResultStatus::Success;
+}
+
+/*static*/ ProgramMetadata ProgramMetadata::GetDefault() {
+    ProgramMetadata result;
+
+    result.LoadManual(
+        true /*is_64_bit*/, FileSys::ProgramAddressSpaceType::Is39Bit /*address_space*/,
+        0x2c /*main_thread_prio*/, 0 /*main_thread_core*/, 0x00100000 /*main_thread_stack_size*/,
+        0 /*title_id*/, 0xFFFFFFFFFFFFFFFF /*filesystem_permissions*/,
+        0x1FE00000 /*system_resource_size*/, {} /*capabilities*/);
 
     return result;
 }
 
-Loader::ResultStatus ProgramMetadata::Load(const std::vector<u8> file_data, size_t offset) {
-    size_t total_size = static_cast<size_t>(file_data.size() - offset);
-    if (total_size < sizeof(Header))
-        return Loader::ResultStatus::Error;
-
-    size_t header_offset = offset;
-    memcpy(&npdm_header, &file_data[offset], sizeof(Header));
-
-    size_t aci_offset = header_offset + npdm_header.aci_offset;
-    size_t acid_offset = header_offset + npdm_header.acid_offset;
-    memcpy(&aci_header, &file_data[aci_offset], sizeof(AciHeader));
-    memcpy(&acid_header, &file_data[acid_offset], sizeof(AcidHeader));
-
-    size_t fac_offset = acid_offset + acid_header.fac_offset;
-    size_t fah_offset = aci_offset + aci_header.fah_offset;
-    memcpy(&acid_file_access, &file_data[fac_offset], sizeof(FileAccessControl));
-    memcpy(&aci_file_access, &file_data[fah_offset], sizeof(FileAccessHeader));
-
-    return Loader::ResultStatus::Success;
+void ProgramMetadata::LoadManual(bool is_64_bit, ProgramAddressSpaceType address_space,
+                                 s32 main_thread_prio, u32 main_thread_core,
+                                 u32 main_thread_stack_size, u64 title_id,
+                                 u64 filesystem_permissions, u32 system_resource_size,
+                                 KernelCapabilityDescriptors capabilities) {
+    npdm_header.has_64_bit_instructions.Assign(is_64_bit);
+    npdm_header.address_space_type.Assign(address_space);
+    npdm_header.main_thread_priority = static_cast<u8>(main_thread_prio);
+    npdm_header.main_thread_cpu = static_cast<u8>(main_thread_core);
+    npdm_header.main_stack_size = main_thread_stack_size;
+    aci_header.title_id = title_id;
+    aci_file_access.permissions = filesystem_permissions;
+    npdm_header.system_resource_size = system_resource_size;
+    aci_kernel_capabilities = std ::move(capabilities);
 }
 
 bool ProgramMetadata::Is64BitProgram() const {
@@ -76,39 +108,55 @@ u64 ProgramMetadata::GetFilesystemPermissions() const {
     return aci_file_access.permissions;
 }
 
+u32 ProgramMetadata::GetSystemResourceSize() const {
+    return npdm_header.system_resource_size;
+}
+
+const ProgramMetadata::KernelCapabilityDescriptors& ProgramMetadata::GetKernelCapabilities() const {
+    return aci_kernel_capabilities;
+}
+
 void ProgramMetadata::Print() const {
-    LOG_DEBUG(Service_FS, "Magic:                  %.4s", npdm_header.magic.data());
-    LOG_DEBUG(Service_FS, "Main thread priority:   0x%02x", npdm_header.main_thread_priority);
-    LOG_DEBUG(Service_FS, "Main thread core:       %u", npdm_header.main_thread_cpu);
-    LOG_DEBUG(Service_FS, "Main thread stack size: 0x%x bytes", npdm_header.main_stack_size);
-    LOG_DEBUG(Service_FS, "Process category:       %u", npdm_header.process_category);
-    LOG_DEBUG(Service_FS, "Flags:                  %02x", npdm_header.flags);
-    LOG_DEBUG(Service_FS, " > 64-bit instructions: %s",
+    LOG_DEBUG(Service_FS, "Magic:                  {:.4}", npdm_header.magic.data());
+    LOG_DEBUG(Service_FS, "Main thread priority:   0x{:02X}", npdm_header.main_thread_priority);
+    LOG_DEBUG(Service_FS, "Main thread core:       {}", npdm_header.main_thread_cpu);
+    LOG_DEBUG(Service_FS, "Main thread stack size: 0x{:X} bytes", npdm_header.main_stack_size);
+    LOG_DEBUG(Service_FS, "Process category:       {}", npdm_header.process_category);
+    LOG_DEBUG(Service_FS, "Flags:                  0x{:02X}", npdm_header.flags);
+    LOG_DEBUG(Service_FS, " > 64-bit instructions: {}",
               npdm_header.has_64_bit_instructions ? "YES" : "NO");
 
-    auto address_space = "Unknown";
+    const char* address_space = "Unknown";
     switch (npdm_header.address_space_type) {
-    case ProgramAddressSpaceType::Is64Bit:
-        address_space = "64-bit";
+    case ProgramAddressSpaceType::Is36Bit:
+        address_space = "64-bit (36-bit address space)";
+        break;
+    case ProgramAddressSpaceType::Is39Bit:
+        address_space = "64-bit (39-bit address space)";
         break;
     case ProgramAddressSpaceType::Is32Bit:
         address_space = "32-bit";
         break;
+    case ProgramAddressSpaceType::Is32BitNoMap:
+        address_space = "32-bit (no map region)";
+        break;
     }
 
-    LOG_DEBUG(Service_FS, " > Address space:       %s\n", address_space);
+    LOG_DEBUG(Service_FS, " > Address space:       {}\n", address_space);
 
     // Begin ACID printing (potential perms, signed)
-    LOG_DEBUG(Service_FS, "Magic:                  %.4s", acid_header.magic.data());
-    LOG_DEBUG(Service_FS, "Flags:                  %02x", acid_header.flags);
-    LOG_DEBUG(Service_FS, " > Is Retail:           %s", acid_header.is_retail ? "YES" : "NO");
-    LOG_DEBUG(Service_FS, "Title ID Min:           %016" PRIX64, acid_header.title_id_min);
-    LOG_DEBUG(Service_FS, "Title ID Max:           %016" PRIX64, acid_header.title_id_max);
-    LOG_DEBUG(Service_FS, "Filesystem Access:      %016" PRIX64 "\n", acid_file_access.permissions);
+    LOG_DEBUG(Service_FS, "Magic:                  {:.4}", acid_header.magic.data());
+    LOG_DEBUG(Service_FS, "Flags:                  0x{:02X}", acid_header.flags);
+    LOG_DEBUG(Service_FS, " > Is Retail:           {}", acid_header.is_retail ? "YES" : "NO");
+    LOG_DEBUG(Service_FS, "Title ID Min:           0x{:016X}", acid_header.title_id_min);
+    LOG_DEBUG(Service_FS, "Title ID Max:           0x{:016X}", acid_header.title_id_max);
+    u64_le permissions_l; // local copy to fix alignment error
+    std::memcpy(&permissions_l, &acid_file_access.permissions, sizeof(permissions_l));
+    LOG_DEBUG(Service_FS, "Filesystem Access:      0x{:016X}\n", permissions_l);
 
     // Begin ACI0 printing (actual perms, unsigned)
-    LOG_DEBUG(Service_FS, "Magic:                  %.4s", aci_header.magic.data());
-    LOG_DEBUG(Service_FS, "Title ID:               %016" PRIX64, aci_header.title_id);
-    LOG_DEBUG(Service_FS, "Filesystem Access:      %016" PRIX64 "\n", aci_file_access.permissions);
+    LOG_DEBUG(Service_FS, "Magic:                  {:.4}", aci_header.magic.data());
+    LOG_DEBUG(Service_FS, "Title ID:               0x{:016X}", aci_header.title_id);
+    LOG_DEBUG(Service_FS, "Filesystem Access:      0x{:016X}\n", aci_file_access.permissions);
 }
 } // namespace FileSys

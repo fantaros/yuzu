@@ -1,3 +1,4 @@
 #!/bin/bash -ex
 
-docker run -v $(pwd):/yuzu ubuntu:18.04 /bin/bash /yuzu/.travis/linux/docker.sh
+mkdir -p "$HOME/.ccache"
+docker run -e ENABLE_COMPATIBILITY_REPORTING --env-file .travis/common/travis-ci.env -v $(pwd):/yuzu -v "$HOME/.ccache":/home/yuzu/.ccache yuzuemu/build-environments:linux-fresh /bin/bash /yuzu/.travis/linux/docker.sh

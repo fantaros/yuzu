@@ -8,100 +8,123 @@
 #include "core/hle/service/am/applet_oe.h"
 #include "core/hle/service/nvflinger/nvflinger.h"
 
-namespace Service {
-namespace AM {
+namespace Service::AM {
 
 class IApplicationProxy final : public ServiceFramework<IApplicationProxy> {
 public:
-    IApplicationProxy(std::shared_ptr<NVFlinger::NVFlinger> nvflinger)
-        : ServiceFramework("IApplicationProxy"), nvflinger(std::move(nvflinger)) {
+    explicit IApplicationProxy(NVFlinger::NVFlinger& nvflinger_,
+                               std::shared_ptr<AppletMessageQueue> msg_queue_,
+                               Core::System& system_)
+        : ServiceFramework{system_, "IApplicationProxy"}, nvflinger{nvflinger_},
+          msg_queue{std::move(msg_queue_)} {
+        // clang-format off
         static const FunctionInfo functions[] = {
             {0, &IApplicationProxy::GetCommonStateGetter, "GetCommonStateGetter"},
             {1, &IApplicationProxy::GetSelfController, "GetSelfController"},
             {2, &IApplicationProxy::GetWindowController, "GetWindowController"},
             {3, &IApplicationProxy::GetAudioController, "GetAudioController"},
             {4, &IApplicationProxy::GetDisplayController, "GetDisplayController"},
+            {10, nullptr, "GetProcessWindingController"},
             {11, &IApplicationProxy::GetLibraryAppletCreator, "GetLibraryAppletCreator"},
             {20, &IApplicationProxy::GetApplicationFunctions, "GetApplicationFunctions"},
             {1000, &IApplicationProxy::GetDebugFunctions, "GetDebugFunctions"},
         };
+        // clang-format on
+
         RegisterHandlers(functions);
     }
 
 private:
     void GetAudioController(Kernel::HLERequestContext& ctx) {
-        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
-        rb.Push(RESULT_SUCCESS);
-        rb.PushIpcInterface<IAudioController>();
         LOG_DEBUG(Service_AM, "called");
+
+        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+        rb.Push(ResultSuccess);
+        rb.PushIpcInterface<IAudioController>(system);
     }
 
     void GetDisplayController(Kernel::HLERequestContext& ctx) {
-        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
-        rb.Push(RESULT_SUCCESS);
-        rb.PushIpcInterface<IDisplayController>();
         LOG_DEBUG(Service_AM, "called");
+
+        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+        rb.Push(ResultSuccess);
+        rb.PushIpcInterface<IDisplayController>(system);
     }
 
     void GetDebugFunctions(Kernel::HLERequestContext& ctx) {
-        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
-        rb.Push(RESULT_SUCCESS);
-        rb.PushIpcInterface<IDebugFunctions>();
         LOG_DEBUG(Service_AM, "called");
+
+        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+        rb.Push(ResultSuccess);
+        rb.PushIpcInterface<IDebugFunctions>(system);
     }
 
     void GetWindowController(Kernel::HLERequestContext& ctx) {
-        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
-        rb.Push(RESULT_SUCCESS);
-        rb.PushIpcInterface<IWindowController>();
         LOG_DEBUG(Service_AM, "called");
+
+        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+        rb.Push(ResultSuccess);
+        rb.PushIpcInterface<IWindowController>(system);
     }
 
     void GetSelfController(Kernel::HLERequestContext& ctx) {
-        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
-        rb.Push(RESULT_SUCCESS);
-        rb.PushIpcInterface<ISelfController>(nvflinger);
         LOG_DEBUG(Service_AM, "called");
+
+        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+        rb.Push(ResultSuccess);
+        rb.PushIpcInterface<ISelfController>(system, nvflinger);
     }
 
     void GetCommonStateGetter(Kernel::HLERequestContext& ctx) {
-        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
-        rb.Push(RESULT_SUCCESS);
-        rb.PushIpcInterface<ICommonStateGetter>();
         LOG_DEBUG(Service_AM, "called");
+
+        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+        rb.Push(ResultSuccess);
+        rb.PushIpcInterface<ICommonStateGetter>(system, msg_queue);
     }
 
     void GetLibraryAppletCreator(Kernel::HLERequestContext& ctx) {
-        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
-        rb.Push(RESULT_SUCCESS);
-        rb.PushIpcInterface<ILibraryAppletCreator>();
         LOG_DEBUG(Service_AM, "called");
+
+        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+        rb.Push(ResultSuccess);
+        rb.PushIpcInterface<ILibraryAppletCreator>(system);
     }
 
     void GetApplicationFunctions(Kernel::HLERequestContext& ctx) {
-        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
-        rb.Push(RESULT_SUCCESS);
-        rb.PushIpcInterface<IApplicationFunctions>();
         LOG_DEBUG(Service_AM, "called");
+
+        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+        rb.Push(ResultSuccess);
+        rb.PushIpcInterface<IApplicationFunctions>(system);
     }
 
-    std::shared_ptr<NVFlinger::NVFlinger> nvflinger;
+    NVFlinger::NVFlinger& nvflinger;
+    std::shared_ptr<AppletMessageQueue> msg_queue;
 };
 
 void AppletOE::OpenApplicationProxy(Kernel::HLERequestContext& ctx) {
-    IPC::ResponseBuilder rb{ctx, 2, 0, 1};
-    rb.Push(RESULT_SUCCESS);
-    rb.PushIpcInterface<IApplicationProxy>(nvflinger);
     LOG_DEBUG(Service_AM, "called");
+
+    IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+    rb.Push(ResultSuccess);
+    rb.PushIpcInterface<IApplicationProxy>(nvflinger, msg_queue, system);
 }
 
-AppletOE::AppletOE(std::shared_ptr<NVFlinger::NVFlinger> nvflinger)
-    : ServiceFramework("appletOE"), nvflinger(std::move(nvflinger)) {
+AppletOE::AppletOE(NVFlinger::NVFlinger& nvflinger_, std::shared_ptr<AppletMessageQueue> msg_queue_,
+                   Core::System& system_)
+    : ServiceFramework{system_, "appletOE"}, nvflinger{nvflinger_}, msg_queue{
+                                                                        std::move(msg_queue_)} {
     static const FunctionInfo functions[] = {
-        {0x00000000, &AppletOE::OpenApplicationProxy, "OpenApplicationProxy"},
+        {0, &AppletOE::OpenApplicationProxy, "OpenApplicationProxy"},
     };
     RegisterHandlers(functions);
 }
 
-} // namespace AM
-} // namespace Service
+AppletOE::~AppletOE() = default;
+
+const std::shared_ptr<AppletMessageQueue>& AppletOE::GetMessageQueue() const {
+    return msg_queue;
+}
+
+} // namespace Service::AM

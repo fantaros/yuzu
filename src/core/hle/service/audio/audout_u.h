@@ -4,38 +4,36 @@
 
 #pragma once
 
+#include <vector>
 #include "core/hle/service/service.h"
+
+namespace AudioCore {
+class AudioOut;
+}
+
+namespace Core {
+class System;
+}
 
 namespace Kernel {
 class HLERequestContext;
 }
 
-namespace Service {
-namespace Audio {
+namespace Service::Audio {
 
 class IAudioOut;
 
 class AudOutU final : public ServiceFramework<AudOutU> {
 public:
-    AudOutU();
-    ~AudOutU() = default;
+    explicit AudOutU(Core::System& system_);
+    ~AudOutU() override;
 
 private:
-    std::shared_ptr<IAudioOut> audio_out_interface;
+    void ListAudioOutsImpl(Kernel::HLERequestContext& ctx);
+    void OpenAudioOutImpl(Kernel::HLERequestContext& ctx);
 
-    void ListAudioOuts(Kernel::HLERequestContext& ctx);
-    void OpenAudioOut(Kernel::HLERequestContext& ctx);
-
-    enum class PcmFormat : u32 {
-        Invalid = 0,
-        Int8 = 1,
-        Int16 = 2,
-        Int24 = 3,
-        Int32 = 4,
-        PcmFloat = 5,
-        Adpcm = 6,
-    };
+    std::vector<std::shared_ptr<IAudioOut>> audio_out_interfaces;
+    std::unique_ptr<AudioCore::AudioOut> audio_core;
 };
 
-} // namespace Audio
-} // namespace Service
+} // namespace Service::Audio

@@ -4,47 +4,121 @@
 
 #pragma once
 
-#include <chrono>
-#include <cstdarg>
+#include <filesystem>
+#include <memory>
 #include <string>
-#include <utility>
+#include <string_view>
+#include "common/logging/filter.h"
 #include "common/logging/log.h"
 
-namespace Log {
+namespace Common::FS {
+class IOFile;
+}
+
+namespace Common::Log {
 
 class Filter;
 
 /**
- * A log entry. Log entries are store in a structured format to permit more varied output
- * formatting on different frontends, as well as facilitating filtering and aggregation.
+ * Interface for logging backends. As loggers can be created and removed at runtime, this can be
+ * used by a frontend for adding a custom logging backend as needed
  */
-struct Entry {
-    std::chrono::microseconds timestamp;
-    Class log_class;
-    Level log_level;
-    std::string location;
-    std::string message;
+class Backend {
+public:
+    virtual ~Backend() = default;
 
-    Entry() = default;
-    Entry(Entry&& o) = default;
+    virtual void SetFilter(const Filter& new_filter) {
+        filter = new_filter;
+    }
+    virtual const char* GetName() const = 0;
+    virtual void Write(const Entry& entry) = 0;
 
-    Entry& operator=(Entry&& o) = default;
+private:
+    Filter filter;
 };
 
 /**
- * Returns the name of the passed log class as a C-string. Subclasses are separated by periods
- * instead of underscores as in the enumeration.
+ * Backend that writes to stderr without any color commands
  */
-const char* GetLogClassName(Class log_class);
+class ConsoleBackend : public Backend {
+public:
+    ~ConsoleBackend() override;
+
+    static const char* Name() {
+        return "console";
+    }
+    const char* GetName() const override {
+        return Name();
+    }
+    void Write(const Entry& entry) override;
+};
 
 /**
- * Returns the name of the passed log level as a C-string.
+ * Backend that writes to stderr and with color
  */
-const char* GetLevelName(Level log_level);
+class ColorConsoleBackend : public Backend {
+public:
+    ~ColorConsoleBackend() override;
 
-/// Creates a log entry by formatting the given source location, and message.
-Entry CreateEntry(Class log_class, Level log_level, const char* filename, unsigned int line_nr,
-                  const char* function, const char* format, va_list args);
+    static const char* Name() {
+        return "color_console";
+    }
 
-void SetFilter(Filter* filter);
-} // namespace Log
+    const char* GetName() const override {
+        return Name();
+    }
+    void Write(const Entry& entry) override;
+};
+
+/**
+ * Backend that writes to a file passed into the constructor
+ */
+class FileBackend : public Backend {
+public:
+    explicit FileBackend(const std::filesystem::path& filename);
+    ~FileBackend() override;
+
+    static const char* Name() {
+        return "file";
+    }
+
+    const char* GetName() const override {
+        return Name();
+    }
+
+    void Write(const Entry& entry) override;
+
+private:
+    std::unique_ptr<FS::IOFile> file;
+    std::size_t bytes_written = 0;
+};
+
+/**
+ * Backend that writes to Visual Studio's output window
+ */
+class DebuggerBackend : public Backend {
+public:
+    ~DebuggerBackend() override;
+
+    static const char* Name() {
+        return "debugger";
+    }
+    const char* GetName() const override {
+        return Name();
+    }
+    void Write(const Entry& entry) override;
+};
+
+void AddBackend(std::unique_ptr<Backend> backend);
+
+void RemoveBackend(std::string_view backend_name);
+
+Backend* GetBackend(std::string_view backend_name);
+
+/**
+ * The global filter will prevent any messages from even being processed if they are filtered. Each
+ * backend can have a filter, but if the level is lower than the global filter, the backend will
+ * never get the message
+ */
+void SetGlobalFilter(const Filter& filter);
+} // namespace Common::Log
